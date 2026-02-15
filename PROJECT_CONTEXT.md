@@ -44,12 +44,20 @@ Envoy AI is your **Personal Chief of Staff** — an AI-powered assistant that ma
 - Card-based email display
 - One-click agent processing
 - Empty state for zero pending
+- Email detail modal with full content and attachments
 
 ✅ **Finance UI**
 - Transaction table
 - Stats summary (spent, received, count)
 - Category filters
 - Manual entry support
+
+✅ **Agents Page**
+- Agent configuration viewer with prompts
+- Execution logs with timing and status
+- Flow visualization showing agent handoffs
+- Model configuration display
+- Execution statistics (success rate, avg duration)
 
 ### Tech Stack
 
@@ -150,10 +158,12 @@ agents:
 ## Development Priorities
 
 ### Short Term
-1. Fix pending email ordering (done)
-2. Add empty states (done)
-3. Calendar Agent MVP
-4. Better error handling
+1. ~~Fix pending email ordering~~ (done)
+2. ~~Add empty states~~ (done)
+3. ~~Agent execution logging~~ (done)
+4. ~~Email detail modal~~ (done)
+5. Calendar Agent MVP
+6. Better error handling
 
 ### Medium Term
 1. Agent configuration UI
@@ -169,4 +179,4 @@ agents:
 
 ---
 
-*This document reflects the state as of January 31, 2026*
+*This document reflects the state as of February 15, 2026*

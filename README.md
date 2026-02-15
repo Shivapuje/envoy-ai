@@ -82,8 +82,9 @@ Email arrives → Email Agent categorizes as "Finance"
 
 - **Dark glassmorphism design** with consistent theming
 - **Dashboard** with pending tasks, quick actions, agent status
-- **Inbox** with category filters, pending/processed views
+- **Inbox** with category filters, pending/processed views, email detail modal
 - **Finance tracker** with transaction table, stats
+- **Agents page** with flow visualization, execution logs, model configuration
 - **Responsive** sidebar navigation
 
 ## 🚀 Getting Started
@@ -144,7 +145,8 @@ envoy-ai/
 │   ├── app/
 │   │   ├── api/              # REST endpoints
 │   │   │   ├── email.py      # Email sync, analyze
-│   │   │   └── finance.py    # Transactions
+│   │   │   ├── finance.py    # Transactions
+│   │   │   └── agent_logs.py # Agent execution logs
 │   │   ├── core/             # Config, models
 │   │   ├── features/         # Agent implementations
 │   │   │   ├── email/agent.py
@@ -152,6 +154,7 @@ envoy-ai/
 │   │   ├── services/
 │   │   │   ├── ai_engine.py  # LiteLLM orchestration
 │   │   │   └── email_collector.py
+│   │   ├── models.py         # Database models
 │   │   └── main.py
 │   └── requirements.txt
 │
@@ -159,8 +162,9 @@ envoy-ai/
     ├── src/
     │   ├── app/
     │   │   ├── page.tsx      # Dashboard
-    │   │   ├── email/        # Inbox
-    │   │   └── finance/      # Finance tracker
+    │   │   ├── email/        # Inbox with detail modal
+    │   │   ├── finance/      # Finance tracker
+    │   │   └── agents/       # Agent logs & flows
     │   └── components/
     │       ├── layout/sidebar.tsx
     │       └── ui/glass/     # Design system
@@ -223,6 +227,9 @@ export default function PlannerPage() {
 - [x] LiteLLM multi-model support
 - [x] IMAP email sync
 - [x] Dashboard with live stats
+- [x] Agent execution logging system
+- [x] Agent flow visualization page
+- [x] Email detail modal with attachments
 
 ### Phase 2: Extended Agents
 - [ ] Calendar Agent (event parsing)

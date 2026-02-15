@@ -27,6 +27,7 @@ Envoy AI is a multi-agent orchestration platform that uses specialized AI agents
 │   API Layer      │   Service Layer  │   Agent Layer    │   Data Layer   │
 │   /api/email.py  │   ai_engine.py   │   email/agent    │   SQLite DB    │
 │   /api/finance   │   email_collector│   finance/agent  │   models.py    │
+│   /api/agent_logs│                  │                  │                │
 └──────────────────┴──────────────────┴──────────────────┴────────────────┘
                                   │
                                   ▼
@@ -113,6 +114,15 @@ SQLite-backed persistence using SQLAlchemy.
 - `amount`, `merchant`, `category`: Extracted data
 - `transaction_type`: debit | credit
 
+**AgentLog**
+- `run_id`: Groups related agent executions in a flow
+- `agent_name`: Which agent executed (email, finance, etc.)
+- `model_used`: LLM model used for this execution
+- `status`: pending | running | success | error
+- `duration_ms`: Execution time in milliseconds
+- `parent_log_id`: For tracking agent handoffs
+- `sequence_order`: Order in the execution chain
+
 ---
 
 ## Design Patterns
@@ -179,11 +189,16 @@ Layout (Sidebar + Content)
 ├── Inbox
 │   ├── Header (title, sync status, toolbar)
 │   ├── Category Filters (Pending, All, Finance, etc.)
-│   └── Email Grid (GlassCard per email)
-└── Finance
-    ├── Stats Row (Spent, Received, Count)
-    ├── Category Filters
-    └── Transaction Table
+│   ├── Email Grid (GlassCard per email)
+│   └── Email Detail Modal (full email view with attachments)
+├── Finance
+│   ├── Stats Row (Spent, Received, Count)
+│   ├── Category Filters
+│   └── Transaction Table
+└── Agents
+    ├── Agent Cards (configuration, status, prompts)
+    ├── Execution Logs (recent runs with timing)
+    └── Flow Visualization (agent handoff chains)
 ```
 
 ### Glass Components
@@ -212,6 +227,16 @@ Reusable UI primitives in `/components/ui/glass/`:
 |--------|----------|---------|
 | GET | `/api/finance/transactions` | List transactions |
 | POST | `/api/finance/parse` | Manual text parsing |
+
+### Agent Logs Endpoints
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/agents/logs` | Get agent execution logs |
+| GET | `/api/agents/flows` | Get grouped flow runs |
+| GET | `/api/agents/flows/{run_id}` | Get specific flow details |
+| GET | `/api/agents/config` | Get model configuration |
+| GET | `/api/agents/stats` | Get execution statistics |
 
 ### Response Patterns
 
@@ -285,4 +310,4 @@ class AgentBus:
 
 ---
 
-*Last updated: January 31, 2026*
+*Last updated: February 15, 2026*
