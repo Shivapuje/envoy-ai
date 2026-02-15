@@ -1,9 +1,10 @@
 "use client";
 
-import { Home, Mail, DollarSign, Calendar, Bot } from "lucide-react";
+import { Home, Mail, DollarSign, Calendar, Bot, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 const navItems = [
     { href: "/", label: "Home", icon: Home },
@@ -15,6 +16,7 @@ const navItems = [
 
 export function Sidebar() {
     const pathname = usePathname();
+    const { user, logout } = useAuth();
 
     return (
         <nav className="fixed left-0 top-0 h-screen w-16 bg-[#0a0510]/90 backdrop-blur-xl border-r border-white/5 flex flex-col items-center py-6 z-50">
@@ -49,10 +51,27 @@ export function Sidebar() {
                 })}
             </div>
 
-            {/* Status indicator */}
-            <div className="mt-auto">
-                <div className="w-2 h-2 rounded-full bg-green-500" title="Connected" />
+            {/* User & Logout */}
+            <div className="mt-auto flex flex-col items-center gap-3">
+                {user && (
+                    <div
+                        className="w-8 h-8 rounded-full bg-violet-600/30 border border-violet-500/30 flex items-center justify-center"
+                        title={user.display_name}
+                    >
+                        <span className="text-xs font-medium text-violet-300">
+                            {user.display_name.charAt(0).toUpperCase()}
+                        </span>
+                    </div>
+                )}
+                <button
+                    onClick={logout}
+                    title="Sign out"
+                    className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                >
+                    <LogOut className="w-4 h-4" />
+                </button>
             </div>
         </nav>
     );
 }
+

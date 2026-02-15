@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./envoy_ai.db
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-change-in-production}
+      - JWT_ALGORITHM=HS256
+      - JWT_EXPIRATION_MINUTES=10080
+      - RP_ID=localhost
+      - RP_NAME=Envoy AI
+      - RP_ORIGIN=http://localhost:3000
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - IMAP_SERVER=${IMAP_SERVER:-imap.gmail.com}
+      - EMAIL_USER=${EMAIL_USER:-}
+      - EMAIL_PASS=${EMAIL_PASS:-}
+      - DISABLE_AUTH=${DISABLE_AUTH:-false}
+    volumes:
+      - ./backend:/app
+      - backend-data:/app/data
+      - chromadb-data:/app/chromadb_data
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - envoy-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+    depends_on:
+      - backend
+    networks:
+      - envoy-network
+
+volumes:
+  backend-data:
+  chromadb-data:
+
+networks:
+  envoy-network:
+    driver: bridge
