@@ -9,6 +9,7 @@ pytest==7.4.3
 crewai
 litellm
 apscheduler
+langchain-google-genai
 
 # Database
 sqlalchemy>=2.0.36
