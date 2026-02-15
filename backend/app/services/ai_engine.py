@@ -1,5 +1,5 @@
 """
-AI Engine with multi-model support and execution logging.
+AI Engine with multi-model support, execution logging, and RAG context.
 """
 
 import os
@@ -68,9 +68,31 @@ class AIEngine:
         )
         return response.choices[0].message.content
 
+    def _get_rag_context(self, text: str, user_id: Optional[int] = None) -> str:
+        """Retrieve RAG context for the given text. Returns empty string if unavailable."""
+        try:
+            from app.services.rag_service import get_rag_service
+            rag = get_rag_service()
+            return rag.build_context_prompt(text, user_id)
+        except Exception as e:
+            logger.debug(f"RAG context unavailable: {e}")
+            return ""
+
+    def _store_rag_context(self, email_id: Optional[int], text: str, analysis: dict, user_id: Optional[int] = None):
+        """Store processed email analysis in RAG for future context."""
+        if not email_id:
+            return
+        try:
+            from app.services.rag_service import get_rag_service
+            rag = get_rag_service()
+            rag.store_email_context(email_id, text, analysis, user_id)
+        except Exception as e:
+            logger.debug(f"Failed to store RAG context: {e}")
+
     def run_finance_agent(self, text: str, run_id: Optional[str] = None, 
-                          db_session=None, parent_log_id: Optional[int] = None) -> dict:
-        """Extract financial transaction details."""
+                          db_session=None, parent_log_id: Optional[int] = None,
+                          user_id: Optional[int] = None, email_id: Optional[int] = None) -> dict:
+        """Extract financial transaction details with RAG context."""
         if not self.available:
             return {"error": "No API keys configured"}
         
@@ -80,8 +102,14 @@ class AIEngine:
         
         logger.info(f"Running Finance Agent with {model}...")
         
+        # Base prompt
         system_prompt = """You are a Financial Analyst. Extract transaction details.
 Return JSON: {"amount": <float>, "currency": "<INR/USD>", "vendor": "<name>", "category": "<Food/Transport/Shopping/Other>", "transaction_type": "<debit/credit>", "date": "<YYYY-MM-DD or null>", "is_subscription": <boolean>}"""
+
+        # Inject RAG context
+        rag_context = self._get_rag_context(text, user_id)
+        if rag_context:
+            system_prompt += f"\n\nUse this context from similar past emails to improve accuracy:\n{rag_context}"
 
         try:
             result = self._call_llm(model, system_prompt, f"Extract from:\n{text}")
@@ -117,8 +145,9 @@ Return JSON: {"amount": <float>, "currency": "<INR/USD>", "vendor": "<name>", "c
             return {"error": str(e)}
 
     def run_email_agent(self, text: str, run_id: Optional[str] = None, 
-                        db_session=None) -> dict:
-        """Analyze and categorize an email."""
+                        db_session=None, user_id: Optional[int] = None,
+                        email_id: Optional[int] = None) -> dict:
+        """Analyze and categorize an email with RAG context."""
         if not self.available:
             return {"error": "No API keys configured"}
         
@@ -128,12 +157,21 @@ Return JSON: {"amount": <float>, "currency": "<INR/USD>", "vendor": "<name>", "c
             
         logger.info(f"Running Email Agent with {model}...")
         
+        # Base prompt
         system_prompt = """You are an Executive Assistant triaging emails.
 Return JSON: {"category": "<Urgent/Finance/Work/Newsletter/Spam/Personal/Other>", "urgency_score": <1-10>, "summary": "<one sentence>", "action_required": <boolean>}"""
+
+        # Inject RAG context
+        rag_context = self._get_rag_context(text, user_id)
+        if rag_context:
+            system_prompt += f"\n\nUse this context from similar past emails and user corrections to improve accuracy:\n{rag_context}"
 
         try:
             result = self._call_llm(model, system_prompt, f"Analyze:\n{text}")
             parsed = json.loads(result)
+            
+            # Store in RAG for future context
+            self._store_rag_context(email_id, text, parsed, user_id)
             
             # Log execution
             log_id = self._log_execution(

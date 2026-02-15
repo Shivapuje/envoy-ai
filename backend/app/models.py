@@ -197,3 +197,22 @@ class AgentPreference(Base):
     
     def __repr__(self):
         return f"<AgentPreference(sender={self.sender_pattern}, agents={self.preferred_agents})>"
+
+
+class UserCorrection(Base):
+    """Track user corrections to AI analysis for RAG learning."""
+    
+    __tablename__ = "user_corrections"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    email_id = Column(Integer, ForeignKey("emails.id"), nullable=False)
+    
+    field_corrected = Column(String(100), nullable=False)  # e.g., "category", "urgency_score"
+    old_value = Column(String(500))
+    new_value = Column(String(500), nullable=False)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<UserCorrection(email={self.email_id}, field={self.field_corrected})>"

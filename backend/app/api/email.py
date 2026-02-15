@@ -8,9 +8,10 @@ import logging
 import re
 
 from app.database import get_db
-from app.models import Email, Transaction, AgentPreference, User
+from app.models import Email, Transaction, AgentPreference, UserCorrection, User
 from app.services.email_collector import get_email_collector
 from app.services.ai_engine import get_ai_engine
+from app.services.rag_service import get_rag_service
 from app.api.auth import get_active_user
 
 # Create router
@@ -58,7 +59,7 @@ def _process_finance_email(db: Session, ai_engine, email, email_text: str, user_
     Extract finance data from email and create a transaction.
     Returns the finance analysis result.
     """
-    finance_result = ai_engine.run_finance_agent(email_text[:3000])
+    finance_result = ai_engine.run_finance_agent(email_text[:3000], user_id=user_id, email_id=email.id)
     
     if "error" in finance_result:
         return finance_result
@@ -133,7 +134,7 @@ async def analyze_pending_emails(
                 continue
                 
             # Run Email Triage Agent
-            analysis = ai_engine.run_email_agent(text[:3000])
+            analysis = ai_engine.run_email_agent(text[:3000], user_id=user_id, email_id=email.id)
             
             if "error" in analysis:
                 logger.error(f"Error analyzing email {email.id}: {analysis['error']}")
@@ -192,7 +193,7 @@ async def analyze_single_email(
         if len(text) < 50 and email.body_html:
             text = re.sub('<[^<]+?>', '', email.body_html)
               
-        analysis = ai_engine.run_email_agent(text[:3000])
+        analysis = ai_engine.run_email_agent(text[:3000], user_id=user_id, email_id=email.id)
         
         if "error" in analysis:
             raise HTTPException(status_code=500, detail=analysis["error"])
@@ -521,3 +522,79 @@ async def list_preferences(
         }
         for p in prefs
     ]
+
+
+# === CORRECTION ENDPOINT ===
+
+class CorrectionRequest(BaseModel):
+    field: str  # e.g., "category", "urgency_score"
+    new_value: str
+
+
+@router.post("/{email_id}/correct")
+async def correct_email_analysis(
+    email_id: int,
+    request: CorrectionRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
+    """
+    Submit a correction to an email's AI analysis.
+    Stores the correction in both the DB and ChromaDB for RAG learning.
+    """
+    query = db.query(Email).filter(Email.id == email_id)
+    if current_user:
+        query = query.filter(Email.user_id == current_user.id)
+
+    email = query.first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    user_id = current_user.id if current_user else None
+
+    # Parse current analysis to get old value
+    old_value = None
+    if email.ai_analysis:
+        try:
+            data = json.loads(email.ai_analysis)
+            old_value = str(data.get(request.field, ""))
+            # Apply correction to stored analysis
+            data[request.field] = request.new_value
+            email.ai_analysis = json.dumps(data)
+        except json.JSONDecodeError:
+            pass
+
+    # Save correction to DB
+    correction = UserCorrection(
+        user_id=user_id,
+        email_id=email_id,
+        field_corrected=request.field,
+        old_value=old_value,
+        new_value=request.new_value,
+    )
+    db.add(correction)
+    db.commit()
+
+    # Store in ChromaDB for RAG
+    email_text = email.body_text or email.subject or ""
+    try:
+        rag = get_rag_service()
+        rag.store_correction(
+            email_id=email_id,
+            field=request.field,
+            old_value=old_value or "",
+            new_value=request.new_value,
+            email_text=email_text,
+            user_id=user_id,
+        )
+    except Exception as e:
+        logger.error(f"Failed to store correction in RAG: {e}")
+
+    return {
+        "status": "success",
+        "correction": {
+            "field": request.field,
+            "old_value": old_value,
+            "new_value": request.new_value,
+        }
+    }
