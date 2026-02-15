@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-from app.api import agents, health, transactions, finance, email
+from app.api import agents, health, transactions, finance, email, agent_logs
 from app.database import init_db
 from app.services.email_collector import get_email_collector
 
@@ -47,6 +47,7 @@ app.include_router(agents.router, prefix="/api", tags=["agents"])
 app.include_router(transactions.router, prefix="/api", tags=["transactions"])
 app.include_router(finance.router, prefix="/api/finance", tags=["finance"])
 app.include_router(email.router, prefix="/api/email", tags=["email"])
+app.include_router(agent_logs.router, tags=["agent-logs"])
 
 # Initialize background scheduler
 scheduler = BackgroundScheduler()

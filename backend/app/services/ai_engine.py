@@ -1,36 +1,64 @@
 """
-AI Engine using Groq (FREE tier) with Llama 3.
+AI Engine with multi-model support and execution logging.
 """
 
 import os
+import uuid
 import logging
 import json
-from typing import Dict, Any
+from datetime import datetime
+from typing import Dict, Any, Optional
 from litellm import completion
 
 logger = logging.getLogger(__name__)
 
-# Using Groq's current Llama 3.3 70B model
-MODEL = "groq/llama-3.3-70b-versatile"
+# Model configuration per agent type
+MODEL_CONFIG = {
+    "email": "groq/llama-3.3-70b-versatile",       # Fast, free
+    "finance": "groq/llama-3.3-70b-versatile",     # Fast, free
+    "credit_card": "openai/gpt-4o",                # High accuracy for statements
+    "default": "groq/llama-3.3-70b-versatile"
+}
+
 
 class AIEngine:
-    """AI Engine using Groq (FREE tier)."""
+    """AI Engine with multi-model support and execution logging."""
     
     def __init__(self):
-        self.api_key = os.getenv("GROQ_API_KEY")
+        self.groq_key = os.getenv("GROQ_API_KEY")
+        self.openai_key = os.getenv("OPENAI_API_KEY")
         
-        if not self.api_key:
-            logger.error("❌ GROQ_API_KEY not found!")
-            logger.error("Get a FREE key at: https://console.groq.com/keys")
-            self.available = False
-        else:
-            self.available = True
-            logger.info("✅ Groq API key found - using Llama 3 70B (FREE)")
+        # Check available providers
+        self.providers = {}
+        if self.groq_key:
+            self.providers["groq"] = True
+            logger.info("✅ Groq API key found")
+        if self.openai_key:
+            self.providers["openai"] = True
+            logger.info("✅ OpenAI API key found")
+            
+        self.available = len(self.providers) > 0
+        
+        if not self.available:
+            logger.error("❌ No API keys found! Set GROQ_API_KEY or OPENAI_API_KEY")
     
-    def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
-        """Make a direct LLM call."""
+    def get_model_for_agent(self, agent_type: str) -> str:
+        """Get the configured model for an agent type."""
+        model = MODEL_CONFIG.get(agent_type, MODEL_CONFIG["default"])
+        
+        # Check if provider is available, fallback if not
+        provider = model.split("/")[0]
+        if provider not in self.providers:
+            fallback = MODEL_CONFIG["default"]
+            logger.warning(f"Provider {provider} not available, falling back to {fallback}")
+            return fallback
+        
+        return model
+    
+    def _call_llm(self, model: str, system_prompt: str, user_prompt: str) -> str:
+        """Make a direct LLM call with specified model."""
         response = completion(
-            model=MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -40,39 +68,215 @@ class AIEngine:
         )
         return response.choices[0].message.content
 
-    def run_finance_agent(self, text: str) -> dict:
+    def run_finance_agent(self, text: str, run_id: Optional[str] = None, 
+                          db_session=None, parent_log_id: Optional[int] = None) -> dict:
         """Extract financial transaction details."""
         if not self.available:
-            return {"error": "GROQ_API_KEY not set"}
-            
-        logger.info(f"Running Finance Agent with {MODEL}...")
+            return {"error": "No API keys configured"}
+        
+        run_id = run_id or str(uuid.uuid4())
+        model = self.get_model_for_agent("finance")
+        start_time = datetime.utcnow()
+        
+        logger.info(f"Running Finance Agent with {model}...")
         
         system_prompt = """You are a Financial Analyst. Extract transaction details.
 Return JSON: {"amount": <float>, "currency": "<INR/USD>", "vendor": "<name>", "category": "<Food/Transport/Shopping/Other>", "transaction_type": "<debit/credit>", "date": "<YYYY-MM-DD or null>", "is_subscription": <boolean>}"""
 
         try:
-            result = self._call_llm(system_prompt, f"Extract from:\n{text}")
-            return json.loads(result)
+            result = self._call_llm(model, system_prompt, f"Extract from:\n{text}")
+            parsed = json.loads(result)
+            
+            # Log execution
+            self._log_execution(
+                db_session=db_session,
+                run_id=run_id,
+                agent_name="finance",
+                model_used=model,
+                input_summary=text[:200],
+                output_summary=f"{parsed.get('vendor', 'Unknown')}: {parsed.get('amount', 0)}",
+                start_time=start_time,
+                status="success",
+                parent_log_id=parent_log_id
+            )
+            
+            return parsed
         except Exception as e:
             logger.error(f"Finance Agent failed: {e}")
+            self._log_execution(
+                db_session=db_session,
+                run_id=run_id,
+                agent_name="finance",
+                model_used=model,
+                input_summary=text[:200],
+                start_time=start_time,
+                status="error",
+                error_message=str(e),
+                parent_log_id=parent_log_id
+            )
             return {"error": str(e)}
 
-    def run_email_agent(self, text: str) -> dict:
+    def run_email_agent(self, text: str, run_id: Optional[str] = None, 
+                        db_session=None) -> dict:
         """Analyze and categorize an email."""
         if not self.available:
-            return {"error": "GROQ_API_KEY not set"}
+            return {"error": "No API keys configured"}
+        
+        run_id = run_id or str(uuid.uuid4())
+        model = self.get_model_for_agent("email")
+        start_time = datetime.utcnow()
             
-        logger.info(f"Running Email Agent with {MODEL}...")
+        logger.info(f"Running Email Agent with {model}...")
         
         system_prompt = """You are an Executive Assistant triaging emails.
 Return JSON: {"category": "<Urgent/Finance/Work/Newsletter/Spam/Personal/Other>", "urgency_score": <1-10>, "summary": "<one sentence>", "action_required": <boolean>}"""
 
         try:
-            result = self._call_llm(system_prompt, f"Analyze:\n{text}")
-            return json.loads(result)
+            result = self._call_llm(model, system_prompt, f"Analyze:\n{text}")
+            parsed = json.loads(result)
+            
+            # Log execution
+            log_id = self._log_execution(
+                db_session=db_session,
+                run_id=run_id,
+                agent_name="email",
+                model_used=model,
+                input_summary=text[:200],
+                output_summary=f"{parsed.get('category', 'Unknown')}: {parsed.get('summary', '')[:100]}",
+                start_time=start_time,
+                status="success"
+            )
+            
+            # Add log metadata for chaining
+            parsed["_run_id"] = run_id
+            parsed["_log_id"] = log_id
+            
+            return parsed
         except Exception as e:
             logger.error(f"Email Agent failed: {e}")
+            self._log_execution(
+                db_session=db_session,
+                run_id=run_id,
+                agent_name="email",
+                model_used=model,
+                input_summary=text[:200],
+                start_time=start_time,
+                status="error",
+                error_message=str(e)
+            )
             return {"error": str(e)}
+    
+    def run_credit_card_agent(self, text: str, run_id: Optional[str] = None,
+                              db_session=None) -> dict:
+        """Extract credit card statement transactions including EMI details."""
+        if not self.available:
+            return {"error": "No API keys configured"}
+        
+        run_id = run_id or str(uuid.uuid4())
+        model = self.get_model_for_agent("credit_card")
+        start_time = datetime.utcnow()
+        
+        logger.info(f"Running Credit Card Agent with {model}...")
+        
+        system_prompt = """You are a Credit Card Statement Analyst. Extract all transactions from the statement.
+
+For each transaction, extract:
+- date: Transaction date (YYYY-MM-DD)
+- description: Merchant/description
+- amount: Transaction amount (positive for credits/payments, negative for debits/purchases)
+- transaction_type: "debit" or "credit"
+- category: Shopping/Dining/Travel/Bills/Entertainment/Fuel/EMI/Other
+
+For EMI transactions, also extract:
+- is_emi: true
+- emi_principal: Principal amount
+- emi_interest: Interest amount
+- emi_gst: GST on interest (18%)
+- emi_remaining_months: Remaining EMI count if available
+
+Return JSON: {
+    "statement_date": "<YYYY-MM-DD>",
+    "card_last_4": "<last 4 digits>",
+    "total_due": <amount>,
+    "min_due": <amount>,
+    "due_date": "<YYYY-MM-DD>",
+    "transactions": [<list of transaction objects>],
+    "summary": {
+        "total_debits": <amount>,
+        "total_credits": <amount>,
+        "emi_count": <number>,
+        "emi_total": <amount>
+    }
+}"""
+
+        try:
+            result = self._call_llm(model, system_prompt, f"Extract from statement:\n{text}")
+            parsed = json.loads(result)
+            
+            # Log execution
+            tx_count = len(parsed.get("transactions", []))
+            self._log_execution(
+                db_session=db_session,
+                run_id=run_id,
+                agent_name="credit_card",
+                model_used=model,
+                input_summary=text[:200],
+                output_summary=f"Extracted {tx_count} transactions, Total: {parsed.get('total_due', 0)}",
+                start_time=start_time,
+                status="success"
+            )
+            
+            return parsed
+        except Exception as e:
+            logger.error(f"Credit Card Agent failed: {e}")
+            self._log_execution(
+                db_session=db_session,
+                run_id=run_id,
+                agent_name="credit_card",
+                model_used=model,
+                input_summary=text[:200],
+                start_time=start_time,
+                status="error",
+                error_message=str(e)
+            )
+            return {"error": str(e)}
+    
+    def _log_execution(self, db_session, run_id: str, agent_name: str, 
+                       model_used: str, input_summary: str, start_time: datetime,
+                       status: str, output_summary: str = None, 
+                       error_message: str = None, parent_log_id: int = None) -> Optional[int]:
+        """Log agent execution to database."""
+        if not db_session:
+            return None
+        
+        try:
+            from app.models import AgentLog
+            
+            end_time = datetime.utcnow()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            
+            log = AgentLog(
+                run_id=run_id,
+                agent_name=agent_name,
+                model_used=model_used,
+                input_summary=input_summary,
+                output_summary=output_summary,
+                started_at=start_time,
+                completed_at=end_time,
+                duration_ms=duration_ms,
+                status=status,
+                error_message=error_message,
+                parent_log_id=parent_log_id
+            )
+            
+            db_session.add(log)
+            db_session.commit()
+            db_session.refresh(log)
+            
+            return log.id
+        except Exception as e:
+            logger.error(f"Failed to log execution: {e}")
+            return None
 
 
 ai_engine = AIEngine()

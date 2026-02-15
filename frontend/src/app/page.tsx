@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Mail, DollarSign, ArrowRight, Inbox, TrendingUp, Zap, Download, Play, Loader2, CheckCircle2, Clock } from 'lucide-react';
+import { Mail, DollarSign, ArrowRight, Inbox, TrendingUp, Zap, Download, Play, Loader2, CheckCircle2, Clock, CreditCard } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
@@ -54,11 +54,11 @@ export default function Home() {
             const pending = emails.filter((e: Email) => e.processing_status === 'pending').length;
             const processed = emails.filter((e: Email) => e.processing_status === 'processed').length;
 
-            // Get recent processed emails for activity feed
-            const recentProcessed = emails
-                .filter((e: Email) => e.processing_status === 'processed')
-                .slice(0, 3);
-            setRecentEmails(recentProcessed);
+            // Get recent emails for activity feed (pending or processed, most recent first)
+            const sortedEmails = [...emails].sort((a: Email, b: Email) =>
+                new Date(b.date).getTime() - new Date(a.date).getTime()
+            );
+            setRecentEmails(sortedEmails.slice(0, 5));
 
             const txnRes = await fetch('http://localhost:8000/api/finance/transactions?limit=100');
             const transactions = await txnRes.json();
@@ -228,16 +228,25 @@ export default function Home() {
 
                         <div className="space-y-2">
                             {recentEmails.length === 0 ? (
-                                <p className="text-xs text-slate-500 py-2">No processed emails yet</p>
+                                <p className="text-xs text-slate-500 py-2">No emails yet. Click Sync Inbox to get started.</p>
                             ) : (
                                 recentEmails.map((email) => (
                                     <div key={email.id} className="flex items-start gap-2 p-2 rounded-lg bg-white/[0.02]">
-                                        <CheckCircle2 className="w-3.5 h-3.5 text-green-400 mt-0.5 flex-shrink-0" />
+                                        {email.processing_status === 'processed' ? (
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-green-400 mt-0.5 flex-shrink-0" />
+                                        ) : (
+                                            <Clock className="w-3.5 h-3.5 text-yellow-400 mt-0.5 flex-shrink-0" />
+                                        )}
                                         <div className="flex-1 min-w-0">
                                             <p className="text-xs text-white truncate">{email.subject}</p>
                                             <p className="text-[10px] text-slate-500 truncate">{email.sender.replace(/<.*>/, '').trim()}</p>
                                         </div>
-                                        <span className="text-[9px] text-slate-600 px-1.5 py-0.5 rounded bg-white/5">{email.category}</span>
+                                        <span className={`text-[9px] px-1.5 py-0.5 rounded ${email.processing_status === 'processed'
+                                                ? 'text-green-400 bg-green-500/10'
+                                                : 'text-yellow-400 bg-yellow-500/10'
+                                            }`}>
+                                            {email.processing_status === 'processed' ? email.category || 'Processed' : 'Pending'}
+                                        </span>
                                     </div>
                                 ))
                             )}
@@ -279,7 +288,7 @@ export default function Home() {
                 </div>
 
                 {/* Agents */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                     <div className="p-4 rounded-lg bg-[#130b1c]/40 border border-white/5">
                         <div className="flex items-center gap-3">
                             <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
@@ -311,13 +320,29 @@ export default function Home() {
                             </div>
                         </div>
                     </div>
+
+                    <div className="p-4 rounded-lg bg-[#130b1c]/40 border border-white/5">
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                                <CreditCard className="w-4 h-4 text-blue-400" />
+                            </div>
+                            <div>
+                                <p className="text-sm font-medium text-white">CC Agent</p>
+                                <p className="text-[10px] text-slate-500">GPT-4o • Statements</p>
+                            </div>
+                            <div className="ml-auto flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                <span className="text-[10px] text-green-400">Active</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Footer */}
                 <div className="flex items-center justify-between pt-4 border-t border-white/5">
                     <div className="flex items-center gap-2">
                         <Zap className="w-3 h-3 text-violet-500" />
-                        <span className="text-[10px] text-slate-500">Powered by LiteLLM + Groq</span>
+                        <span className="text-[10px] text-slate-500">Powered by Groq + GPT-4o</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-green-500" />

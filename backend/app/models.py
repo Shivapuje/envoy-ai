@@ -77,11 +77,13 @@ class Email(Base):
     subject = Column(String(500))
     sender = Column(String(255))
     recipient = Column(String(255))
+    cc = Column(Text)  # Comma-separated CC recipients
     date = Column(DateTime)
     
     # Content
     body_text = Column(Text)
     body_html = Column(Text)
+    attachments = Column(Text)  # JSON array of attachment info: [{name, size, mime_type}]
     
     # Processing
     is_processed = Column(Boolean, default=False)
@@ -94,3 +96,62 @@ class Email(Base):
 
     def __repr__(self):
         return f"<Email(message_id={self.message_id})>"
+
+
+class AgentLog(Base):
+    """Model to track agent executions for flow visualization."""
+    
+    __tablename__ = "agent_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(String(36), index=True, nullable=False)  # Groups related agents
+    
+    # Agent info
+    agent_name = Column(String(50), nullable=False)  # email, finance, credit_card
+    model_used = Column(String(100), nullable=False)  # groq/llama-3.3-70b, gpt-4o
+    
+    # Execution details
+    input_summary = Column(String(200))  # First 200 chars of input
+    output_summary = Column(String(500))  # Key result summary
+    
+    # Timing
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime)
+    duration_ms = Column(Integer)
+    
+    # Status
+    status = Column(String(20), default="pending")  # pending, running, success, error
+    error_message = Column(Text)
+    
+    # Chain tracking for handoffs
+    parent_log_id = Column(Integer, index=True)  # For agent handoffs
+    sequence_order = Column(Integer, default=0)  # Order in the chain
+    
+    # Extra data (JSON)
+    extra_data = Column(Text)  # JSON string for extra data
+    
+    def __repr__(self):
+        return f"<AgentLog(run_id={self.run_id}, agent={self.agent_name}, status={self.status})>"
+
+
+class AgentPreference(Base):
+    """Model to store user's learned preferences for agent assignments."""
+    
+    __tablename__ = "agent_preferences"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Pattern matching
+    sender_pattern = Column(String(255), index=True)  # e.g., "amazon", "hdfc", "@newsletter"
+    subject_pattern = Column(String(255))  # keywords like "order", "statement"
+    
+    # Preferred agents (comma-separated)
+    preferred_agents = Column(String(255), nullable=False)  # e.g., "email,finance"
+    
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    usage_count = Column(Integer, default=1)  # How often this preference was used
+    
+    def __repr__(self):
+        return f"<AgentPreference(sender={self.sender_pattern}, agents={self.preferred_agents})>"

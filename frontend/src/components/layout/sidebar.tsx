@@ -1,6 +1,6 @@
 "use client";
 
-import { Home, Mail, DollarSign, Calendar } from "lucide-react";
+import { Home, Mail, DollarSign, Calendar, Bot } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ const navItems = [
     { href: "/", label: "Home", icon: Home },
     { href: "/email", label: "Inbox", icon: Mail },
     { href: "/finance", label: "Finance", icon: DollarSign },
+    { href: "/agents", label: "Agents", icon: Bot },
     { href: "/planner", label: "Planner", icon: Calendar },
 ];
 

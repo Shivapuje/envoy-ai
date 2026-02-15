@@ -8,7 +8,7 @@ import logging
 import re
 
 from app.database import get_db
-from app.models import Email, Transaction
+from app.models import Email, Transaction, AgentPreference
 from app.services.email_collector import get_email_collector
 from app.services.ai_engine import get_ai_engine
 
@@ -239,3 +239,223 @@ async def list_emails(limit: int = 200, db: Session = Depends(get_db)):
         })
         
     return result
+
+
+# === NEW ENDPOINTS FOR EMAIL MODAL & AGENT ASSIGNMENT ===
+
+class EmailDetailResponse(BaseModel):
+    id: int
+    subject: str
+    sender: str
+    recipient: Optional[str]
+    cc: Optional[str]
+    date: datetime
+    body_text: Optional[str]
+    body_html: Optional[str]
+    attachments: Optional[List[dict]] = []
+    category: Optional[str] = "Uncategorized"
+    summary: Optional[str]
+    urgency_score: Optional[int] = 0
+    action_required: Optional[bool] = False
+    processing_status: str
+    processed_by_agent: Optional[str]
+    suggested_agents: List[str] = []
+
+
+class AssignAgentsRequest(BaseModel):
+    agent_ids: List[str]  # e.g., ["email", "finance"]
+    remember: bool = False  # Save as preference
+
+
+class PreferenceResponse(BaseModel):
+    id: int
+    sender_pattern: str
+    subject_pattern: Optional[str]
+    preferred_agents: str
+    usage_count: int
+
+
+@router.get("/{email_id}", response_model=EmailDetailResponse)
+async def get_email_detail(email_id: int, db: Session = Depends(get_db)):
+    """
+    Get full email details including body content.
+    """
+    email = db.query(Email).filter(Email.id == email_id).first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    
+    # Parse AI analysis
+    category = "Uncategorized"
+    summary = None
+    urgency_score = 0
+    action_required = False
+    
+    if email.ai_analysis:
+        try:
+            data = json.loads(email.ai_analysis)
+            category = data.get("category", "Uncategorized")
+            summary = data.get("summary", "")
+            urgency_score = data.get("urgency_score", 0)
+            action_required = data.get("action_required", False)
+        except:
+            pass
+    
+    # Get suggested agents based on preferences
+    suggested_agents = await _get_suggested_agents(email, db)
+    
+    # Parse attachments JSON
+    attachments = []
+    if email.attachments:
+        try:
+            attachments = json.loads(email.attachments)
+        except:
+            pass
+    
+    return {
+        "id": email.id,
+        "subject": email.subject or "(No Subject)",
+        "sender": email.sender or "Unknown",
+        "recipient": email.recipient,
+        "cc": email.cc,
+        "date": email.date or datetime.now(),
+        "body_text": email.body_text,
+        "body_html": email.body_html,
+        "attachments": attachments,
+        "category": category,
+        "summary": summary,
+        "urgency_score": urgency_score,
+        "action_required": action_required,
+        "processing_status": email.processing_status,
+        "processed_by_agent": email.processed_by_agent,
+        "suggested_agents": suggested_agents
+    }
+
+
+async def _get_suggested_agents(email: Email, db: Session) -> List[str]:
+    """Find matching preferences for this email."""
+    sender = (email.sender or "").lower()
+    subject = (email.subject or "").lower()
+    
+    # Query preferences and check for matches
+    preferences = db.query(AgentPreference).order_by(
+        AgentPreference.usage_count.desc()
+    ).limit(50).all()
+    
+    for pref in preferences:
+        sender_match = pref.sender_pattern and pref.sender_pattern.lower() in sender
+        subject_match = pref.subject_pattern and pref.subject_pattern.lower() in subject
+        
+        if sender_match or subject_match:
+            return pref.preferred_agents.split(",")
+    
+    # Default suggestion based on content hints
+    defaults = ["email"]
+    if any(kw in subject for kw in ["statement", "payment", "transaction", "receipt", "order"]):
+        defaults.append("finance")
+    
+    return defaults
+
+
+@router.post("/{email_id}/assign")
+async def assign_email_to_agents(
+    email_id: int, 
+    request: AssignAgentsRequest, 
+    db: Session = Depends(get_db)
+):
+    """
+    Assign an email to specific agents for processing.
+    Optionally remembers the choice as a preference.
+    """
+    email = db.query(Email).filter(Email.id == email_id).first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    
+    ai_engine = get_ai_engine()
+    email_text = f"Subject: {email.subject}\nFrom: {email.sender}\n\n{email.body_text or ''}"
+    
+    results = []
+    
+    for agent_id in request.agent_ids:
+        try:
+            if agent_id == "email":
+                # Run email triage
+                analysis = ai_engine.analyze_email(email_text, db_session=db)
+                email.ai_analysis = json.dumps(analysis)
+                email.processing_status = "processed"
+                email.processed_by_agent = "email"
+                results.append({"agent": "email", "status": "success", "data": analysis})
+                
+            elif agent_id == "finance":
+                # Run finance extraction
+                result = _process_finance_email(db, ai_engine, email, email_text)
+                results.append({"agent": "finance", "status": "success", "data": result})
+                
+            else:
+                results.append({"agent": agent_id, "status": "skipped", "message": "Agent not implemented"})
+                
+        except Exception as e:
+            logger.exception(f"Error processing with {agent_id}: {e}")
+            results.append({"agent": agent_id, "status": "error", "message": str(e)})
+    
+    # Save preference if requested
+    if request.remember:
+        await _save_preference(email, request.agent_ids, db)
+    
+    db.commit()
+    
+    return {"status": "success", "results": results}
+
+
+async def _save_preference(email: Email, agent_ids: List[str], db: Session):
+    """Save or update a preference based on the email sender."""
+    sender = email.sender or ""
+    
+    # Extract domain or key identifier from sender
+    sender_pattern = None
+    if "@" in sender:
+        # Try to get domain or recognizable part
+        match = re.search(r'@([a-zA-Z0-9.-]+)', sender)
+        if match:
+            domain = match.group(1)
+            # Use first part of domain (e.g., "amazon" from "amazon.in")
+            sender_pattern = domain.split('.')[0]
+    
+    if not sender_pattern:
+        return  # Can't create meaningful pattern
+    
+    # Check if preference already exists
+    existing = db.query(AgentPreference).filter(
+        AgentPreference.sender_pattern == sender_pattern
+    ).first()
+    
+    agents_str = ",".join(agent_ids)
+    
+    if existing:
+        existing.preferred_agents = agents_str
+        existing.usage_count += 1
+        existing.updated_at = datetime.utcnow()
+    else:
+        pref = AgentPreference(
+            sender_pattern=sender_pattern,
+            preferred_agents=agents_str
+        )
+        db.add(pref)
+
+
+@router.get("/preferences/list", response_model=List[PreferenceResponse])
+async def list_preferences(db: Session = Depends(get_db)):
+    """Get all saved agent preferences."""
+    prefs = db.query(AgentPreference).order_by(
+        AgentPreference.usage_count.desc()
+    ).limit(100).all()
+    
+    return [
+        {
+            "id": p.id,
+            "sender_pattern": p.sender_pattern or "",
+            "subject_pattern": p.subject_pattern,
+            "preferred_agents": p.preferred_agents,
+            "usage_count": p.usage_count
+        }
+        for p in prefs
+    ]
