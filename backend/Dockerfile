@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies (gcc for C extensions, curl for healthcheck)
+# Install system dependencies (gcc for C extensions, curl for healthcheck, libpq-dev for PostgreSQL)
 RUN apt-get update && apt-get install -y \
     gcc \
     curl \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
