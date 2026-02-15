@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  # Backend API
+  # Backend API (FastAPI + Uvicorn)
   backend:
     build:
       context: ./backend
@@ -27,11 +25,26 @@ services:
       - ./backend:/app
       - backend-data:/app/data
       - chromadb-data:/app/chromadb_data
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # --reload with watchfiles for hot-reload inside Docker
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+             uvicorn app.main:app
+             --host 0.0.0.0
+             --port 8000
+             --reload
+             --reload-dir /app
+             --log-level info"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     networks:
       - envoy-network
 
-  # Frontend
+  # Frontend (Next.js)
   frontend:
     build:
       context: ./frontend
@@ -40,19 +53,33 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - WATCHPACK_POLLING=true
+      - CHOKIDAR_USEPOLLING=true
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/next.config.mjs:/app/next.config.mjs
+      - ./frontend/tailwind.config.ts:/app/tailwind.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
     command: npm run dev
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:3000" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+        restart: true
     networks:
       - envoy-network
 
 volumes:
   backend-data:
   chromadb-data:
+
 
 networks:
   envoy-network:
