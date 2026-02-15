@@ -8,175 +8,93 @@ Envoy AI is your **Personal Chief of Staff** — an AI-powered assistant that ma
 
 - **Email Agent** triages your inbox
 - **Finance Agent** extracts transactions from bank emails
+- **Credit Card Agent** parses credit card statements
 - **Calendar Agent** parses meeting invites *(coming soon)*
 - **Investment Advisor** analyzes your portfolio *(coming soon)*
-- And more...
 
-## Current State (v0.1)
+## Current State (v0.2)
 
 ### Working Features
 
-✅ **Email Sync**
-- Connects to any IMAP server (Gmail, Outlook, etc.)
-- Fetches emails and stores locally
-- Duplicate detection for fast re-sync
+✅ **Email Sync** — IMAP connection, duplicate detection, user-scoped storage
 
-✅ **Email Agent**
-- Categorizes emails (Finance, Personal, Work, Newsletter, etc.)
-- Generates summaries
-- Assigns urgency scores
-- Identifies action items
+✅ **Email Agent** — Categorize, summarize, urgency score, action items
 
-✅ **Finance Agent**
-- Auto-triggered for Finance-category emails
-- Extracts: amount, vendor, date, transaction type
-- Creates transaction records
-- Skips 0-value emails (balance inquiries, etc.)
+✅ **Finance Agent** — Extract amount, vendor, date, transaction type
 
-✅ **Dashboard**
-- Live pending email count
-- Quick Sync & Run Agent buttons
-- Recent activity feed
-- Agent status indicators
+✅ **Credit Card Agent** — Parse full credit card statements including EMI transactions
 
-✅ **Inbox UI**
-- Category filters (Pending first as default)
-- Card-based email display
-- One-click agent processing
-- Empty state for zero pending
-- Email detail modal with full content and attachments
+✅ **RAG Context** — Agents retrieve similar past emails + user corrections via pgvector to improve accuracy over time
 
-✅ **Finance UI**
-- Transaction table
-- Stats summary (spent, received, count)
-- Category filters
-- Manual entry support
+✅ **Passkey Authentication** — Passwordless WebAuthn login with JWT sessions
 
-✅ **Agents Page**
-- Agent configuration viewer with prompts
-- Execution logs with timing and status
-- Flow visualization showing agent handoffs
-- Model configuration display
-- Execution statistics (success rate, avg duration)
+✅ **Multi-Tenancy** — All data (emails, transactions, logs, embeddings) scoped per user
+
+✅ **Docker Environment** — PostgreSQL (pgvector) + Backend + Frontend with hot-reload and auto-recovery
+
+✅ **Dashboard** — Live pending email count, quick actions, agent status
+
+✅ **Inbox UI** — Category filters, email detail modal, one-click AI processing, user corrections
+
+✅ **Finance UI** — Transaction table, stats summary, category filters
+
+✅ **Agents Page** — Execution logs, flow visualization, model configuration
 
 ### Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Next.js 14, React, TypeScript, Tailwind CSS |
-| Backend | FastAPI, Python 3.11+, SQLAlchemy, SQLite |
-| AI/LLM | LiteLLM (Groq as default), CrewAI |
+| Frontend | Next.js 14, React, TypeScript |
+| Backend | FastAPI, Python 3.11+, SQLAlchemy |
+| Database | PostgreSQL 16 + pgvector (Docker), SQLite (local dev) |
+| AI/LLM | LiteLLM (Groq default), sentence-transformers |
+| Auth | WebAuthn (passkeys) + JWT |
 | Email | IMAP via imap-tools |
-
-### Why Groq?
-
-- **Free tier** with generous limits
-- **Fastest inference** (< 500ms)
-- **Quality models** (Llama 3.3 70B)
-- Easy to switch to OpenAI/Anthropic later
+| Deployment | Docker Compose |
 
 ## Design Philosophy
 
 ### 1. Model Agnostic
-
-Each agent can use a different LLM provider:
-```
-Email Agent → Groq (fast, free)
-Finance Agent → Groq (accurate)
-Investment Agent → Anthropic Claude (deep analysis)
-```
+Each agent can use a different LLM provider. Groq for speed, OpenAI for accuracy, Anthropic for deep analysis.
 
 ### 2. Agent Specialization
+One agent, one job. The Email Agent doesn't extract transactions — it hands off to the Finance Agent.
 
-One agent, one job. The Email Agent doesn't try to extract transactions — it hands off to the Finance Agent.
+### 3. RAG-Enhanced
+Agents learn from history. Past emails and user corrections are embedded and retrieved as context for new analyses.
 
-### 3. User in Control
+### 4. User in Control
+AI suggests, user confirms. Corrections feed back into the RAG system.
 
-AI suggests, user confirms. No auto-actions that can't be undone.
-
-### 4. Privacy First
-
-- All data stays local
-- Self-hostable
-- No telemetry
-
-## Future Agents
-
-| Agent | Purpose | Trigger |
-|-------|---------|---------|
-| **Calendar** | Parse events, create reminders | email.category == "Calendar" |
-| **Investment Advisor** | Portfolio analysis, market news | Manual or scheduled |
-| **Tax Advisor** | Track deductibles, categorize expenses | transaction.category check |
-| **Travel Planner** | Itinerary extraction | email.subject contains "booking" |
-| **Newsletter Curator** | Summarize daily newsletters | email.category == "Newsletter" |
-| **Bill Reminder** | Due date alerts | email.subject contains "bill", "due" |
-| **Meeting Prep** | Research attendees, summarize context | calendar.event.upcoming |
-| **Contact Enricher** | LinkedIn/company research | New contact detected |
-
-## How Agents Will Communicate
-
-```
-User receives email about flight booking
-        ↓
-Email Agent → Category: "Travel"
-        ↓
-Travel Agent → Extract: dates, flight#, confirmation
-        ↓
-Calendar Agent → Create event with details
-        ↓
-Meeting Prep Agent → Research destination
-        ↓
-Notification → "Trip to NYC added, 3 meetings scheduled"
-```
-
-## Configuration Vision
-
-Users will be able to customize agents via YAML:
-
-```yaml
-agents:
-  email_triage:
-    model: groq/llama-3.3-70b-versatile
-    enabled: true
-    
-  finance:
-    model: groq/llama-3.3-70b-versatile
-    enabled: true
-    auto_trigger_on:
-      - email.category == "Finance"
-    
-  calendar:
-    model: openai/gpt-4o
-    enabled: false  # Coming soon
-    
-  investment:
-    model: anthropic/claude-3-opus
-    schedule: "daily at 9am"
-    portfolio_api: alpaca
-```
+### 5. Privacy First
+Self-hostable, no telemetry, all data stays on your infrastructure.
 
 ## Development Priorities
 
-### Short Term
-1. ~~Fix pending email ordering~~ (done)
-2. ~~Add empty states~~ (done)
-3. ~~Agent execution logging~~ (done)
-4. ~~Email detail modal~~ (done)
-5. Calendar Agent MVP
-6. Better error handling
+### Completed ✅
+1. ~~IMAP email sync~~
+2. ~~Email + Finance agents~~
+3. ~~Agent execution logging~~
+4. ~~Email detail modal~~
+5. ~~Docker environment~~
+6. ~~Passkey authentication~~
+7. ~~Multi-tenancy~~
+8. ~~RAG system (pgvector)~~
+9. ~~PostgreSQL migration~~
 
-### Medium Term
-1. Agent configuration UI
-2. Workflow builder
-3. Notification system
-4. Mobile-responsive improvements
+### Next Up
+1. Calendar Agent MVP
+2. Cloud deployment (Fly.io / Railway)
+3. CI/CD pipeline
+4. Agent configuration UI
+5. Mobile-responsive improvements
 
-### Long Term
+### Future
 1. Voice interface
 2. Browser extension
-3. RAG over personal data
-4. Learning from user behavior
+3. Proactive suggestions
+4. Cross-agent insights
 
 ---
 
-*This document reflects the state as of February 15, 2026*
+*This document reflects the state as of February 16, 2026*

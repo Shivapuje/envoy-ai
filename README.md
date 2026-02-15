@@ -6,7 +6,7 @@
 
 ## 🎯 Vision
 
-Envoy AI is a **model-agnostic multi-agent orchestration platform** where specialized AI agents work together in harmony. Each agent is an expert in its domain — triaging emails, extracting financial data, managing calendars, advising on investments — and they communicate seamlessly to automate complex workflows.
+Envoy AI is a **model-agnostic multi-agent orchestration platform** where specialized AI agents work together in harmony. Each agent is an expert in its domain — triaging emails, extracting financial data, managing calendars — and they communicate seamlessly to automate complex workflows.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -20,10 +20,9 @@ Envoy AI is a **model-agnostic multi-agent orchestration platform** where specia
 │   └─────────────┘    └─────────────┘    └─────────────┘        │
 │          │                  │                  │                │
 │          ▼                  ▼                  ▼                │
-│   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐        │
-│   │   Inbox     │    │  Finance    │    │  Planner    │        │
-│   │   (UI)      │    │   (UI)      │    │   (UI)      │        │
-│   └─────────────┘    └─────────────┘    └─────────────┘        │
+│   ┌──────────────────────────────────────────────────┐         │
+│   │        RAG Context (pgvector in PostgreSQL)      │         │
+│   └──────────────────────────────────────────────────┘         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -36,12 +35,28 @@ Envoy AI is a **model-agnostic multi-agent orchestration platform** where specia
 |-------|-------|---------|--------|
 | **Email Triage** | Groq (Llama 3.3 70B) | Categorize, summarize, extract action items | ✅ Active |
 | **Finance** | Groq (Llama 3.3 70B) | Extract transactions from bank emails | ✅ Active |
+| **Credit Card** | OpenAI (GPT-4o) | Parse credit card statements | ✅ Active |
 | **Calendar** | *Configurable* | Parse events, schedule meetings | 🚧 Planned |
 | **Investment Advisor** | *Configurable* | Portfolio analysis, market insights | 🚧 Planned |
-| **Tax Advisor** | *Configurable* | Tax-related email classification, deduction tracking | 🚧 Planned |
-| **Travel Planner** | *Configurable* | Itinerary extraction, booking confirmations | 🚧 Planned |
-| **Newsletter Curator** | *Configurable* | Summarize, highlight key articles | 🚧 Planned |
-| **Bill Reminder** | *Configurable* | Due date extraction, payment alerts | 🚧 Planned |
+
+### 🔐 Passkey Authentication
+
+Passwordless WebAuthn-based auth with JWT session management. Disable with `DISABLE_AUTH=true` for local dev.
+
+### 👥 Multi-Tenancy
+
+All data is user-scoped — emails, transactions, agent logs, and preferences are isolated per user. Backward-compatible with `DISABLE_AUTH=true`.
+
+### 🧠 RAG Context (pgvector)
+
+AI agents have memory. Processed emails are stored as vector embeddings in PostgreSQL (via pgvector). When analyzing a new email, the system retrieves similar past emails and user corrections to improve accuracy over time.
+
+```
+New email → embed text → query pgvector for similar past emails
+         → inject matches into LLM system prompt
+         → LLM uses context for better categorization
+         → result stored back for future context
+```
 
 ### 🧠 Model-Agnostic Architecture
 
@@ -49,34 +64,13 @@ Powered by **LiteLLM**, Envoy supports any LLM provider with a unified API:
 
 ```python
 MODEL_CONFIG = {
-    "email_triage": "groq/llama-3.3-70b-versatile",  # Fast, free
-    "finance": "groq/llama-3.3-70b-versatile",       # Accurate extraction
-    "calendar": "openai/gpt-4o",                      # Complex reasoning
-    "investment": "anthropic/claude-3-opus",          # Deep analysis
+    "email":       "groq/llama-3.3-70b-versatile",  # Fast, free
+    "finance":     "groq/llama-3.3-70b-versatile",   # Accurate extraction
+    "credit_card": "openai/gpt-4o",                  # High accuracy
 }
 ```
 
-**Supported Providers:**
-- ✅ Groq (Free, fast inference)
-- ✅ OpenAI (GPT-4o, GPT-3.5)
-- ✅ Anthropic (Claude 3)
-- ✅ Google (Gemini)
-- ✅ Local models via Ollama
-- ✅ 100+ more via LiteLLM
-
-### 🔄 Agent Communication
-
-Agents hand off work to each other:
-
-```
-Email arrives → Email Agent categorizes as "Finance"
-                     ↓
-              Finance Agent extracts transaction
-                     ↓
-              Transaction saved to database
-                     ↓
-              Dashboard updated in real-time
-```
+**Supported Providers:** Groq, OpenAI, Anthropic, Google, Ollama, 100+ more via LiteLLM.
 
 ### 🎨 Modern UI
 
@@ -89,39 +83,45 @@ Email arrives → Email Agent categorizes as "Finance"
 
 ## 🚀 Getting Started
 
-### Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- A Groq API key (free at [console.groq.com](https://console.groq.com))
-
-### Quick Start
+### Option 1: Docker (Recommended)
 
 ```bash
-# Clone the repository
 git clone https://github.com/your-username/envoy-ai.git
 cd envoy-ai
 
-# Backend setup
+# Configure backend env
+cp backend/.env.example backend/.env
+# Edit backend/.env — add your API keys
+
+# Start everything
+docker compose up --build
+```
+
+**Services:**
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| API Docs | http://localhost:8000/docs |
+| PostgreSQL | localhost:5432 |
+
+### Option 2: Local Development
+
+```bash
+# Backend
 cd backend
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Configure environment
-cp .env.example .env
-# Add your GROQ_API_KEY to .env
-
-# Start backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# Frontend setup (new terminal)
+# Frontend (new terminal)
 cd frontend
 npm install
 npm run dev
 ```
 
-**Open:** http://localhost:3000
+> **Note:** Local dev uses SQLite by default. Docker uses PostgreSQL with pgvector.
 
 ### Environment Variables
 
@@ -135,88 +135,50 @@ ANTHROPIC_API_KEY=sk-ant-...# Optional
 IMAP_SERVER=imap.gmail.com
 EMAIL_USER=your@email.com
 EMAIL_PASS=your-app-password
+
+# Auth (set to true to bypass passkey auth in dev)
+DISABLE_AUTH=true
+
+# Database (auto-set by Docker, override for cloud PostgreSQL)
+# DATABASE_URL=postgresql://user:pass@host:5432/dbname
 ```
 
 ## 📁 Project Structure
 
 ```
 envoy-ai/
+├── docker-compose.yml         # PostgreSQL (pgvector) + Backend + Frontend
 ├── backend/
+│   ├── Dockerfile
 │   ├── app/
-│   │   ├── api/              # REST endpoints
-│   │   │   ├── email.py      # Email sync, analyze
-│   │   │   ├── finance.py    # Transactions
-│   │   │   └── agent_logs.py # Agent execution logs
-│   │   ├── core/             # Config, models
-│   │   ├── features/         # Agent implementations
-│   │   │   ├── email/agent.py
-│   │   │   └── finance/agent.py
+│   │   ├── api/
+│   │   │   ├── auth.py        # Passkey auth + JWT
+│   │   │   ├── email.py       # Email sync, analyze, correct
+│   │   │   ├── finance.py     # Transactions
+│   │   │   └── agent_logs.py  # Agent execution logs
 │   │   ├── services/
-│   │   │   ├── ai_engine.py  # LiteLLM orchestration
+│   │   │   ├── ai_engine.py   # LiteLLM orchestration + RAG
+│   │   │   ├── rag_service.py # pgvector RAG context
+│   │   │   ├── auth_service.py# WebAuthn passkeys
 │   │   │   └── email_collector.py
-│   │   ├── models.py         # Database models
+│   │   ├── models.py          # SQLAlchemy models + pgvector embeddings
+│   │   ├── database.py        # PostgreSQL / SQLite dual support
 │   │   └── main.py
 │   └── requirements.txt
 │
 └── frontend/
+    ├── Dockerfile
     ├── src/
     │   ├── app/
-    │   │   ├── page.tsx      # Dashboard
-    │   │   ├── email/        # Inbox with detail modal
-    │   │   ├── finance/      # Finance tracker
-    │   │   └── agents/       # Agent logs & flows
+    │   │   ├── page.tsx       # Dashboard
+    │   │   ├── email/         # Inbox with detail modal
+    │   │   ├── finance/       # Finance tracker
+    │   │   └── agents/        # Agent logs & flows
+    │   ├── contexts/
+    │   │   └── AuthContext.tsx # Passkey auth context
     │   └── components/
-    │       ├── layout/sidebar.tsx
-    │       └── ui/glass/     # Design system
+    │       └── ui/glass/      # Design system
     └── package.json
-```
-
-## 🔧 Adding a New Agent
-
-1. **Create the agent** in `backend/app/features/`:
-
-```python
-# backend/app/features/calendar/agent.py
-from crewai import Agent, Task, Crew
-
-def create_calendar_agent():
-    return Agent(
-        role="Calendar Manager",
-        goal="Extract events, dates, and scheduling info",
-        backstory="Expert at parsing meeting invites and calendar events",
-        verbose=True
-    )
-```
-
-2. **Register in AI Engine**:
-
-```python
-# backend/app/services/ai_engine.py
-MODEL_CONFIG = {
-    # ... existing
-    "calendar": "openai/gpt-4o",
-}
-
-def run_calendar_agent(self, text: str) -> dict:
-    # Implementation
-```
-
-3. **Add API endpoint**:
-
-```python
-# backend/app/api/calendar.py
-@router.post("/parse-event")
-async def parse_event(text: str):
-    return ai_engine.run_calendar_agent(text)
-```
-
-4. **Create frontend page**:
-
-```tsx
-// frontend/src/app/planner/page.tsx
-export default function PlannerPage() {
-  // Implementation
-}
 ```
 
 ## 🎯 Roadmap
@@ -226,28 +188,25 @@ export default function PlannerPage() {
 - [x] Finance Agent (transaction extraction)
 - [x] LiteLLM multi-model support
 - [x] IMAP email sync
-- [x] Dashboard with live stats
-- [x] Agent execution logging system
-- [x] Agent flow visualization page
-- [x] Email detail modal with attachments
+- [x] Dashboard, Inbox, Finance, Agents UI
+- [x] Agent execution logging + flow visualization
+- [x] Docker environment with hot-reload
 
-### Phase 2: Extended Agents
+### Phase 2: SaaS Infrastructure ✅
+- [x] Passkey authentication (WebAuthn)
+- [x] Multi-tenancy (user-scoped data)
+- [x] RAG system with pgvector
+- [x] PostgreSQL migration
+
+### Phase 3: Extended Agents
 - [ ] Calendar Agent (event parsing)
 - [ ] Investment Advisor (portfolio insights)
-- [ ] Tax Advisor (deduction tracking)
-- [ ] Travel Planner (itinerary extraction)
+- [ ] Newsletter Curator (summarize dailies)
 
-### Phase 3: Advanced Orchestration
-- [ ] Agent-to-agent communication
-- [ ] Workflow automation (if X then Y)
-- [ ] User-defined custom agents
-- [ ] Voice interface integration
-
-### Phase 4: Intelligence Layer
-- [ ] Learning from user preferences
-- [ ] Proactive suggestions
-- [ ] Cross-agent insights
-- [ ] RAG over personal data
+### Phase 4: Cloud Deployment
+- [ ] Deploy to cloud (Fly.io / Railway)
+- [ ] CI/CD pipeline
+- [ ] Environment-based configuration
 
 ## 🏗️ Architecture Principles
 
@@ -255,7 +214,7 @@ export default function PlannerPage() {
 2. **Agent Specialization**: Each agent excels in one domain
 3. **Graceful Handoff**: Agents route work to the right specialist
 4. **User in Control**: Review AI decisions before actions
-5. **Privacy First**: Local-first, self-hostable
+5. **Privacy First**: Self-hostable, no telemetry
 
 ## 📄 License
 
@@ -263,4 +222,4 @@ MIT
 
 ---
 
-**Built with ❤️ using FastAPI, Next.js, LiteLLM, and CrewAI**
+**Built with ❤️ using FastAPI, Next.js, LiteLLM, PostgreSQL, and pgvector**

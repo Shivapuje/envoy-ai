@@ -15,8 +15,11 @@ Envoy AI is a multi-agent orchestration platform that uses specialized AI agents
 │                              FRONTEND                                    │
 │                         (Next.js + React)                                │
 ├─────────────────────────────────────────────────────────────────────────┤
-│   Dashboard          │   Inbox            │   Finance       │  Planner  │
-│   (page.tsx)         │   (email/page.tsx) │   (finance/)    │  (TBD)    │
+│   Dashboard          │   Inbox            │   Finance       │  Agents   │
+│   (page.tsx)         │   (email/page.tsx) │   (finance/)    │  (agents/)│
+├─────────────────────────────────────────────────────────────────────────┤
+│                     Passkey Auth (WebAuthn)                              │
+│                        (AuthContext.tsx)                                  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                              REST API                                    │
 │                          (HTTP/JSON)                                     │
@@ -24,10 +27,11 @@ Envoy AI is a multi-agent orchestration platform that uses specialized AI agents
 │                              BACKEND                                     │
 │                         (FastAPI + Python)                               │
 ├──────────────────┬──────────────────┬──────────────────┬────────────────┤
-│   API Layer      │   Service Layer  │   Agent Layer    │   Data Layer   │
-│   /api/email.py  │   ai_engine.py   │   email/agent    │   SQLite DB    │
-│   /api/finance   │   email_collector│   finance/agent  │   models.py    │
-│   /api/agent_logs│                  │                  │                │
+│   API Layer      │   Service Layer  │   AI Layer       │   Data Layer   │
+│   /api/auth.py   │   ai_engine.py   │   RAG context    │   PostgreSQL   │
+│   /api/email.py  │   rag_service.py │   (pgvector)     │   (pgvector)   │
+│   /api/finance   │   auth_service   │   Embeddings     │   models.py    │
+│   /api/agent_logs│   email_collector│   (sentence-tf)  │                │
 └──────────────────┴──────────────────┴──────────────────┴────────────────┘
                                   │
                                   ▼
@@ -51,77 +55,71 @@ The central orchestrator that routes tasks to appropriate agents and models.
 **Responsibilities:**
 - Model selection based on task type
 - Agent instantiation and execution
+- RAG context injection (retrieve similar past emails before LLM call)
+- RAG storage (store results after successful analysis)
 - Error handling and fallbacks
 
 **Key Pattern: Per-Agent Model Configuration**
 
 ```python
 MODEL_CONFIG = {
-    "email_triage": "groq/llama-3.3-70b-versatile",
-    "finance": "groq/llama-3.3-70b-versatile", 
-    "calendar": "openai/gpt-4o",  # Future
+    "email":       "groq/llama-3.3-70b-versatile",
+    "finance":     "groq/llama-3.3-70b-versatile",
+    "credit_card": "openai/gpt-4o",
 }
 ```
 
-This allows each agent to use the most suitable model for its task.
+### 2. RAG Service (`services/rag_service.py`)
 
-### 2. Agents (`features/{domain}/agent.py`)
+pgvector-powered context retrieval for AI agents.
 
-Specialized AI workers built with CrewAI framework.
+**How it works:**
+1. When an email is processed, the text is embedded via `sentence-transformers` (all-MiniLM-L6-v2, 384-dim)
+2. The embedding + analysis metadata are stored in `email_embeddings` table
+3. When processing a new email, the top-3 similar past emails are retrieved via cosine distance
+4. Similar emails + user corrections are injected into the LLM system prompt
 
-**Email Triage Agent**
-- Input: Raw email text
-- Output: Category, summary, urgency score, action items
-- Model: Groq/Llama (fast, free)
+**Tables:**
+- `email_embeddings` — Vector(384) + category, urgency_score, summary
+- `correction_embeddings` — Vector(384) + field, old_value, new_value
 
-**Finance Agent**
-- Input: Finance-related email text
-- Output: Amount, vendor, date, transaction type
-- Model: Groq/Llama (accurate extraction)
+### 3. Authentication (`services/auth_service.py`)
 
-**Agent Communication Pattern:**
+Passkey-based authentication using WebAuthn.
 
-```
-Email Agent detects category="Finance"
-        ↓
-API Layer routes to Finance Agent
-        ↓
-Finance Agent extracts transaction
-        ↓
-Transaction saved to database
-```
+- **Registration:** Browser creates a credential, server verifies and stores
+- **Login:** Challenge-response flow using stored credential
+- **Sessions:** JWT tokens with configurable expiration
+- **Dev mode:** `DISABLE_AUTH=true` bypasses all auth checks
 
-### 3. Email Collector (`services/email_collector.py`)
+### 4. Multi-Tenancy
 
-IMAP client that syncs emails to local database.
+All data is user-scoped via `user_id` foreign key on:
+- `Email`, `Transaction`, `AgentLog`, `ProcessedEmail`, `AgentPreference`, `UserCorrection`
+- `EmailEmbedding`, `CorrectionEmbedding`
 
-**Optimization Techniques:**
+The `get_active_user` dependency returns `None` when `DISABLE_AUTH=true`, making all queries return unscoped data.
+
+### 5. Database (`database.py`)
+
+Dual database support:
+
+| Environment | Database | Config |
+|-------------|----------|--------|
+| Local dev | SQLite | Default (no env var needed) |
+| Docker | PostgreSQL + pgvector | `DATABASE_URL` set in docker-compose |
+| Production | Cloud PostgreSQL | `DATABASE_URL` from hosting env |
+
+`init_db()` enables the pgvector extension when using PostgreSQL.
+
+### 6. Email Collector (`services/email_collector.py`)
+
+IMAP client that syncs emails to the database.
+
+**Optimizations:**
 - Pre-loads existing message IDs in one query (O(1) duplicate check)
 - Limits batch size (100 emails per sync)
-- Silent skip for duplicates (no log spam)
-
-### 4. Database Models (`models.py`)
-
-SQLite-backed persistence using SQLAlchemy.
-
-**Email**
-- `message_id`: Unique IMAP ID
-- `processing_status`: pending | processed | failed | skipped
-- `ai_analysis`: JSON blob of agent output
-
-**Transaction**
-- `email_message_id`: Link to source email
-- `amount`, `merchant`, `category`: Extracted data
-- `transaction_type`: debit | credit
-
-**AgentLog**
-- `run_id`: Groups related agent executions in a flow
-- `agent_name`: Which agent executed (email, finance, etc.)
-- `model_used`: LLM model used for this execution
-- `status`: pending | running | success | error
-- `duration_ms`: Execution time in milliseconds
-- `parent_log_id`: For tracking agent handoffs
-- `sequence_order`: Order in the execution chain
+- Email associated with `user_id` for multi-tenancy
 
 ---
 
@@ -129,88 +127,50 @@ SQLite-backed persistence using SQLAlchemy.
 
 ### Model-Agnostic via LiteLLM
 
-All LLM calls go through LiteLLM, enabling:
-- Unified API across providers
-- Easy model swapping per-agent
-- Fallback chains (try Groq, fallback to OpenAI)
-
-```python
-import litellm
-response = litellm.completion(
-    model="groq/llama-3.3-70b-versatile",
-    messages=[{"role": "user", "content": prompt}]
-)
-```
+All LLM calls go through LiteLLM, enabling unified API across providers, easy model swapping per-agent, and fallback chains.
 
 ### Agent Handoff Pattern
 
 When Email Agent detects a specialized category:
 
 ```python
-# In email API
 if category == "finance":
-    finance_result = _process_finance_email(db, ai_engine, email, text)
+    finance_result = _process_finance_email(db, ai_engine, email, text, user_id=user_id)
     analysis["finance_data"] = finance_result
 ```
 
-This pattern will extend to Calendar, Investment, etc.
+### RAG Context Injection
+
+```python
+# Before LLM call
+rag_context = self._get_rag_context(text, user_id)
+if rag_context:
+    system_prompt += f"\n\nContext from similar past emails:\n{rag_context}"
+
+# After successful analysis
+self._store_rag_context(email_id, text, parsed, user_id)
+```
 
 ### Progressive Enhancement
 
 UI works without AI:
 1. **Sync**: Emails fetched and stored (no AI needed)
 2. **Manual trigger**: User clicks "Run Agent" to process
-3. **Auto-process**: Background job processes new emails (future)
-
----
-
-## UI Design System
-
-### Color Palette
-
-```css
---bg-primary: #0f0716      /* Deep purple-black */
---bg-card: #130b1c         /* Slightly lighter */
---accent-primary: #7c3aed  /* Violet 600 */
---text-primary: #f1f5f9    /* Slate 100 */
---text-secondary: #64748b  /* Slate 500 */
-```
-
-### Component Hierarchy
-
-```
-Layout (Sidebar + Content)
-├── Sidebar (fixed, icon-only, 64px)
-├── Dashboard
-│   ├── Task Cards (Pending Emails, Transactions)
-│   ├── Quick Actions (Sync, Run Agent)
-│   ├── Recent Activity (Emails, Transactions)
-│   └── Agent Status Cards
-├── Inbox
-│   ├── Header (title, sync status, toolbar)
-│   ├── Category Filters (Pending, All, Finance, etc.)
-│   ├── Email Grid (GlassCard per email)
-│   └── Email Detail Modal (full email view with attachments)
-├── Finance
-│   ├── Stats Row (Spent, Received, Count)
-│   ├── Category Filters
-│   └── Transaction Table
-└── Agents
-    ├── Agent Cards (configuration, status, prompts)
-    ├── Execution Logs (recent runs with timing)
-    └── Flow Visualization (agent handoff chains)
-```
-
-### Glass Components
-
-Reusable UI primitives in `/components/ui/glass/`:
-- `GlassCard`: Container with backdrop blur
-- `GlassButton`: Glowing action buttons
-- `GlassInput`: Styled input fields
+3. **Auto-process**: Background job processes new emails
 
 ---
 
 ## API Design
+
+### Authentication Endpoints
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/api/auth/register/start` | Begin passkey registration |
+| POST | `/api/auth/register/finish` | Complete registration |
+| POST | `/api/auth/login/start` | Begin passkey login |
+| POST | `/api/auth/login/finish` | Complete login |
+| GET | `/api/auth/me` | Get current user |
 
 ### Email Endpoints
 
@@ -220,6 +180,7 @@ Reusable UI primitives in `/components/ui/glass/`:
 | POST | `/api/email/analyze-pending` | Run Email Agent on pending |
 | POST | `/api/email/analyze/{id}` | Process single email |
 | GET | `/api/email/list` | List emails (pending first) |
+| POST | `/api/email/{id}/correct` | Submit correction for RAG learning |
 
 ### Finance Endpoints
 
@@ -235,79 +196,42 @@ Reusable UI primitives in `/components/ui/glass/`:
 | GET | `/api/agents/logs` | Get agent execution logs |
 | GET | `/api/agents/flows` | Get grouped flow runs |
 | GET | `/api/agents/flows/{run_id}` | Get specific flow details |
-| GET | `/api/agents/config` | Get model configuration |
-| GET | `/api/agents/stats` | Get execution statistics |
-
-### Response Patterns
-
-All endpoints return consistent shapes:
-
-```json
-{
-  "status": "success",
-  "data": { ... },
-  "analyzed_count": 5,
-  "results": [ { "id": 1, "status": "success" } ]
-}
-```
 
 ---
 
-## Future Architecture
-
-### Agent Registry
-
-```python
-AGENT_REGISTRY = {
-    "email_triage": EmailTriageAgent,
-    "finance": FinanceAgent,
-    "calendar": CalendarAgent,
-    "investment": InvestmentAdvisorAgent,
-    "tax": TaxAdvisorAgent,
-}
-```
-
-### Workflow Engine
+## Docker Architecture
 
 ```yaml
-workflows:
-  - name: "Finance Email Processing"
-    trigger: "email.category == 'Finance'"
-    steps:
-      - agent: "finance"
-        action: "extract_transaction"
-      - agent: "tax"  
-        action: "check_deductible"
-        if: "transaction.category == 'Business'"
+services:
+  postgres:     # pgvector/pgvector:pg16 — PostgreSQL with vector extension
+  backend:      # FastAPI + Uvicorn with hot-reload
+  frontend:     # Next.js dev server with polling
 ```
 
-### Multi-Agent Communication
+**Startup order:** `postgres` (healthcheck) → `backend` (healthcheck) → `frontend`
 
-```python
-class AgentBus:
-    def route(self, message: AgentMessage):
-        target = self.registry.get(message.target_agent)
-        return target.process(message.payload)
-```
+**Volumes:** `postgres-data` for persistent database storage.
 
 ---
 
-## Security Considerations
+## Security
 
-1. **API Keys**: Stored in `.env`, never committed
-2. **Email Credentials**: App-specific passwords recommended
-3. **Local-First**: All data stays on user's machine
-4. **No Telemetry**: No data sent to external services
+1. **Passkey Auth**: Phishing-resistant WebAuthn credentials
+2. **JWT Sessions**: Configurable expiration, signed with secret key
+3. **API Keys**: Stored in `.env`, never committed
+4. **Multi-Tenancy**: Data isolated per user
+5. **Self-Hostable**: All data stays on your infrastructure
 
 ---
 
-## Performance Optimizations
+## Performance
 
 1. **Email Sync**: Pre-load IDs, batch commits
-2. **API Responses**: Pending emails first (user sees work to do)
-3. **Frontend**: React Query for caching, optimistic updates
+2. **RAG**: pgvector cosine distance queries with indexed vectors
+3. **Embeddings**: `all-MiniLM-L6-v2` for fast local embedding (384-dim)
 4. **LLM Calls**: Groq for speed (< 500ms typical)
+5. **Frontend**: React Query for caching, optimistic updates
 
 ---
 
-*Last updated: February 15, 2026*
+*Last updated: February 16, 2026*

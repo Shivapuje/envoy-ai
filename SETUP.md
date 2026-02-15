@@ -10,32 +10,66 @@ Complete setup guide for running Envoy AI locally.
 
 | Requirement | Version | Check Command |
 |-------------|---------|---------------|
+| Docker | 24+ | `docker --version` |
+| Docker Compose | 2.20+ | `docker compose version` |
+
+**For local dev without Docker:**
+
+| Requirement | Version | Check Command |
+|-------------|---------|---------------|
 | Python | 3.11+ | `python --version` |
 | Node.js | 18+ | `node --version` |
-| npm | 9+ | `npm --version` |
-| Git | Any | `git --version` |
 
 ---
 
-## Quick Start (5 minutes)
+## Quick Start — Docker (Recommended)
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/your-username/envoy-ai.git
 cd envoy-ai
 
+# 2. Configure environment
+cp backend/.env.example backend/.env
+# Edit backend/.env — add your API keys (see below)
+
+# 3. Start all services
+docker compose up --build
+
+# 4. Open browser
+open http://localhost:3000
+```
+
+**Services started:**
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Frontend | http://localhost:3000 | Next.js UI |
+| Backend | http://localhost:8000 | FastAPI API |
+| API Docs | http://localhost:8000/docs | Swagger UI |
+| PostgreSQL | localhost:5432 | Database (pgvector) |
+
+---
+
+## Quick Start — Local Dev (No Docker)
+
+```bash
+# 1. Clone
+git clone https://github.com/your-username/envoy-ai.git
+cd envoy-ai
+
 # 2. Backend setup
 cd backend
 python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # 3. Configure environment
 cp .env.example .env
-# Edit .env and add your API keys (see below)
+# Edit .env — add your API keys
 
 # 4. Start backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 # 5. Frontend setup (new terminal)
 cd frontend
@@ -46,42 +80,13 @@ npm run dev
 open http://localhost:3000
 ```
 
+> **Note:** Local dev uses SQLite. Docker uses PostgreSQL with pgvector for RAG.
+
 ---
 
-## Detailed Setup
+## Environment Variables
 
-### Step 1: Clone Repository
-
-```bash
-git clone https://github.com/your-username/envoy-ai.git
-cd envoy-ai
-```
-
-### Step 2: Backend Environment
-
-```bash
-cd backend
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# macOS/Linux:
-source venv/bin/activate
-# Windows:
-venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### Step 3: Environment Variables
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with your configuration:
+Edit `backend/.env` with your configuration:
 
 ```env
 # ===========================================
@@ -92,17 +97,11 @@ Edit `.env` with your configuration:
 # Get key at: https://console.groq.com
 GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxx
 
-# OpenAI (Optional)
-# Get key at: https://platform.openai.com/api-keys
+# OpenAI (Optional, used for credit card agent)
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxx
 
 # Anthropic (Optional)
-# Get key at: https://console.anthropic.com
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxx
-
-# Google (Optional)
-# Get key at: https://aistudio.google.com
-GOOGLE_API_KEY=xxxxxxxxxxxxxxxxxxxxx
 
 # ===========================================
 # EMAIL CONFIGURATION (For IMAP sync)
@@ -113,15 +112,33 @@ EMAIL_USER=your@gmail.com
 EMAIL_PASS=your-app-password
 
 # ===========================================
-# DATABASE
+# AUTHENTICATION
 # ===========================================
 
-DATABASE_URL=sqlite:///./envoy.db
+# Set to true to bypass passkey auth (development)
+DISABLE_AUTH=true
+
+# JWT Configuration
+JWT_SECRET_KEY=your-secret-key-change-in-production
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_MINUTES=10080
+
+# WebAuthn
+RP_ID=localhost
+RP_NAME=Envoy AI
+RP_ORIGIN=http://localhost:3000
+
+# ===========================================
+# DATABASE (auto-configured by Docker)
+# ===========================================
+
+# Uncomment for PostgreSQL (Docker sets this automatically)
+# DATABASE_URL=postgresql://envoy:envoy@localhost:5432/envoy_ai
 ```
 
-### Step 4: Email App Password (Gmail)
+### Gmail App Password
 
-For Gmail, you need an **App Password** (not your regular password):
+For Gmail IMAP sync, you need an **App Password**:
 
 1. Go to [Google Account Security](https://myaccount.google.com/security)
 2. Enable **2-Step Verification** if not already enabled
@@ -130,63 +147,89 @@ For Gmail, you need an **App Password** (not your regular password):
 5. Enter "Envoy AI" and click **Generate**
 6. Copy the 16-character password to `EMAIL_PASS`
 
-### Step 5: Start Backend
-
-```bash
-# From backend directory with venv activated
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-Verify it's running:
-- Health check: http://localhost:8000/health
-- API docs: http://localhost:8000/docs
-
-### Step 6: Frontend Setup
-
-```bash
-# New terminal
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-```
-
-### Step 7: Open Application
-
-Navigate to: **http://localhost:3000**
-
 ---
 
 ## Verify Installation
 
-### Backend Health
+### Docker
 
 ```bash
+# Check all services are healthy
+docker compose ps
+
+# Backend health
 curl http://localhost:8000/health
 # Expected: {"status":"healthy"}
+
+# Frontend
+open http://localhost:3000
 ```
 
-### Frontend Running
+### Local Dev
 
-Open http://localhost:3000 and verify:
-- ✅ Dashboard loads
-- ✅ Sidebar navigation works
-- ✅ No console errors
+```bash
+# Backend health
+curl http://localhost:8000/health
 
-### Email Sync Test
+# API docs
+open http://localhost:8000/docs
 
-1. Click **Sync Inbox** on dashboard
-2. Check terminal for connection logs
-3. Emails should appear in Inbox
+# Frontend
+open http://localhost:3000
+```
 
-### Agent Test
+---
 
-1. Click **Run Agent** 
-2. Watch terminal for LLM calls
-3. Emails should show categories and summaries
+## Database
+
+### Docker (PostgreSQL + pgvector)
+
+Docker Compose uses `pgvector/pgvector:pg16` with the vector extension pre-installed. Data is persisted in a `postgres-data` Docker volume.
+
+```bash
+# Connect to database
+docker compose exec postgres psql -U envoy -d envoy_ai
+
+# Reset database (delete volume)
+docker compose down -v
+docker compose up --build
+```
+
+### Local Dev (SQLite)
+
+SQLite database is created automatically at `backend/envoy_ai.db`.
+
+```bash
+# Reset database
+cd backend
+rm envoy_ai.db
+# Restart backend to recreate
+```
+
+---
+
+## Docker Commands
+
+```bash
+# Start all services
+docker compose up --build
+
+# Start in background
+docker compose up -d --build
+
+# View logs
+docker compose logs -f backend
+docker compose logs -f postgres
+
+# Restart a single service
+docker compose restart backend
+
+# Stop all services
+docker compose down
+
+# Stop and remove all data
+docker compose down -v
+```
 
 ---
 
@@ -195,33 +238,23 @@ Open http://localhost:3000 and verify:
 ### Issue: `ModuleNotFoundError`
 
 ```bash
-# Ensure venv is activated
+# Local dev: ensure venv is activated
 source venv/bin/activate
 pip install -r requirements.txt
+
+# Docker: rebuild
+docker compose build --no-cache backend
 ```
 
-### Issue: `GROQ_API_KEY not found`
+### Issue: Backend can't connect to PostgreSQL
 
 ```bash
-# Check .env file exists
-cat .env | grep GROQ
+# Check postgres is running and healthy
+docker compose ps postgres
 
-# Ensure no spaces around =
-GROQ_API_KEY=gsk_xxx  # Correct
-GROQ_API_KEY = gsk_xxx  # Wrong
+# Check logs
+docker compose logs postgres
 ```
-
-### Issue: Email sync fails
-
-```
-Error connecting to email server
-```
-
-**Solutions:**
-1. Verify IMAP server is correct (Gmail: `imap.gmail.com`)
-2. Use App Password, not regular password
-3. Enable "Less secure app access" or use App Password
-4. Check firewall allows port 993
 
 ### Issue: Port already in use
 
@@ -235,98 +268,31 @@ uvicorn app.main:app --port 8001
 
 ### Issue: Frontend can't connect to backend
 
-```
-Error fetching emails: TypeError: Failed to fetch
-```
-
-**Solutions:**
 1. Ensure backend is running on port 8000
 2. Check for CORS issues in browser console
-3. Backend URL is hardcoded as `http://localhost:8000`
+3. Verify `NEXT_PUBLIC_API_URL=http://localhost:8000` in frontend env
+
+### Issue: Passkey registration fails
+
+1. Ensure `RP_ID=localhost` and `RP_ORIGIN=http://localhost:3000`
+2. Use HTTPS in production (WebAuthn requires secure context)
+3. Set `DISABLE_AUTH=true` to bypass auth in development
 
 ---
 
-## Development Setup
+## Development Tips
 
-### Running Both Services
+### Hot Reload
 
-**Terminal 1 (Backend):**
-```bash
-cd backend
-source venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
+- **Docker backend**: Auto-reloads via `watchfiles` when source code changes
+- **Docker frontend**: Auto-reloads via Next.js polling (`WATCHPACK_POLLING=true`)
+- **Local backend**: Use `--reload` flag with uvicorn
+- **Local frontend**: Next.js dev server has HMR built-in
 
-**Terminal 2 (Frontend):**
-```bash
-cd frontend
-npm run dev
-```
+### Auto Recovery
 
-### Database Reset
-
-```bash
-cd backend
-rm envoy.db
-# Restart backend to recreate
-```
-
-### Clear All Data
-
-```bash
-cd backend
-source venv/bin/activate
-python -c "
-from sqlalchemy import text
-from app.database import SessionLocal
-db = SessionLocal()
-db.execute(text('DELETE FROM emails'))
-db.execute(text('DELETE FROM transactions'))
-db.execute(text('DELETE FROM processed_emails'))
-db.commit()
-print('All data cleared')
-"
-```
+Docker services use `restart: unless-stopped` + health checks. If a service crashes, Docker will automatically restart it.
 
 ---
 
-## Production Deployment
-
-### Backend (Docker)
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### Frontend (Vercel)
-
-```bash
-cd frontend
-vercel deploy
-```
-
-### Environment Variables (Production)
-
-Set in your hosting platform:
-- `GROQ_API_KEY`
-- `IMAP_SERVER`
-- `EMAIL_USER`
-- `EMAIL_PASS`
-- `DATABASE_URL` (use PostgreSQL for production)
-
----
-
-## Support
-
-- **Issues**: Open a GitHub issue
-- **Questions**: Discussions tab
-- **Contributions**: PRs welcome!
-
----
-
-*Last updated: January 31, 2026*
+*Last updated: February 16, 2026*
