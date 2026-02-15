@@ -26,14 +26,7 @@ services:
       - backend-data:/app/data
       - chromadb-data:/app/chromadb_data
     # --reload with watchfiles for hot-reload inside Docker
-    command: >
-      sh -c "pip install --no-cache-dir -r requirements.txt &&
-             uvicorn app.main:app
-             --host 0.0.0.0
-             --port 8000
-             --reload
-             --reload-dir /app
-             --log-level info"
+    command: [ "sh", "-c", "pip install --no-cache-dir -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app --log-level info" ]
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" ]
