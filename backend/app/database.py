@@ -29,7 +29,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
-    """Initialize database tables."""
+    """Initialize database tables. Enables pgvector extension for PostgreSQL."""
+    if not DATABASE_URL.startswith("sqlite"):
+        try:
+            from sqlalchemy import text as sa_text
+            with engine.connect() as conn:
+                conn.execute(sa_text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+        except Exception:
+            pass  # Extension may already exist or not be available
     Base.metadata.create_all(bind=engine)
 
 

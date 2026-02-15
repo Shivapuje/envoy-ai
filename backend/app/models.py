@@ -216,3 +216,52 @@ class UserCorrection(Base):
     
     def __repr__(self):
         return f"<UserCorrection(email={self.email_id}, field={self.field_corrected})>"
+
+
+# ------------------------------------------------------------------
+# pgvector embedding models for RAG
+# ------------------------------------------------------------------
+
+try:
+    from pgvector.sqlalchemy import Vector
+    PGVECTOR_AVAILABLE = True
+except ImportError:
+    PGVECTOR_AVAILABLE = False
+
+# Embedding dimension (matches sentence-transformers/all-MiniLM-L6-v2)
+EMBEDDING_DIM = 384
+
+if PGVECTOR_AVAILABLE:
+    class EmailEmbedding(Base):
+        """Vector embedding for processed emails (RAG context)."""
+        
+        __tablename__ = "email_embeddings"
+        
+        id = Column(Integer, primary_key=True, index=True)
+        user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+        email_id = Column(Integer, ForeignKey("emails.id"), nullable=False, unique=True)
+        
+        content = Column(Text, nullable=False)  # Original text used for embedding
+        category = Column(String(100))
+        urgency_score = Column(Integer)
+        summary = Column(String(500))
+        
+        embedding = Column(Vector(EMBEDDING_DIM), nullable=False)
+        created_at = Column(DateTime, default=datetime.utcnow)
+
+    class CorrectionEmbedding(Base):
+        """Vector embedding for user corrections (RAG learning)."""
+        
+        __tablename__ = "correction_embeddings"
+        
+        id = Column(Integer, primary_key=True, index=True)
+        user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+        email_id = Column(Integer, ForeignKey("emails.id"), nullable=False)
+        
+        field = Column(String(100), nullable=False)
+        old_value = Column(String(500))
+        new_value = Column(String(500), nullable=False)
+        content = Column(Text, nullable=False)  # Text used for embedding
+        
+        embedding = Column(Vector(EMBEDDING_DIM), nullable=False)
+        created_at = Column(DateTime, default=datetime.utcnow)

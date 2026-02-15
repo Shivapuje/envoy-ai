@@ -25,8 +25,9 @@ webauthn==2.7.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 
-# Vector DB
-chromadb>=0.4.22
+# Vector DB (pgvector)
+pgvector>=0.3.0
+sentence-transformers>=2.2.2
 
 # Scheduling
 apscheduler
