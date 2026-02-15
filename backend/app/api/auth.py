@@ -5,6 +5,7 @@ Handles passkey registration and login.
 """
 
 import logging
+import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -112,6 +113,26 @@ def get_current_user_optional(
         return get_current_user(credentials, db)
     except HTTPException:
         return None
+
+
+def get_active_user(
+    user: Optional[User] = Depends(get_current_user_optional),
+) -> Optional[User]:
+    """
+    Get the active user for multi-tenant routes.
+    
+    When DISABLE_AUTH=true: returns None (all data visible, dev mode).
+    When auth enabled: returns authenticated user, or raises 401.
+    """
+    if os.getenv("DISABLE_AUTH", "false").lower() == "true":
+        return None
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
 
 # Endpoints

@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.models import AgentLog
+from app.models import AgentLog, User
+from app.api.auth import get_active_user
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -49,15 +50,24 @@ class ModelConfigResponse(BaseModel):
     provider: str
 
 
+def _scoped_query(db: Session, current_user: Optional[User]):
+    """Return an AgentLog query scoped to the current user."""
+    query = db.query(AgentLog)
+    if current_user:
+        query = query.filter(AgentLog.user_id == current_user.id)
+    return query
+
+
 @router.get("/logs", response_model=List[AgentLogResponse])
 def get_agent_logs(
     limit: int = 50,
     agent_name: Optional[str] = None,
     status: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """Get recent agent execution logs."""
-    query = db.query(AgentLog)
+    query = _scoped_query(db, current_user)
     
     if agent_name:
         query = query.filter(AgentLog.agent_name == agent_name)
@@ -71,11 +81,14 @@ def get_agent_logs(
 @router.get("/flows", response_model=List[FlowRunResponse])
 def get_flow_runs(
     limit: int = 20,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """Get grouped flow runs (each run_id is a flow)."""
+    base_query = _scoped_query(db, current_user)
+    
     # Get unique run_ids with aggregated data
-    subquery = db.query(
+    subquery = base_query.with_entities(
         AgentLog.run_id,
         func.min(AgentLog.started_at).label("started_at"),
         func.sum(AgentLog.duration_ms).label("total_duration_ms"),
@@ -84,17 +97,15 @@ def get_flow_runs(
         desc(func.min(AgentLog.started_at))
     ).limit(limit).subquery()
     
-    # Get the run_ids
     runs = db.query(subquery).all()
     
     result = []
     for run in runs:
-        # Get all agents for this run
-        agents = db.query(AgentLog).filter(
-            AgentLog.run_id == run.run_id
-        ).order_by(AgentLog.sequence_order, AgentLog.started_at).all()
+        agents_query = db.query(AgentLog).filter(AgentLog.run_id == run.run_id)
+        if current_user:
+            agents_query = agents_query.filter(AgentLog.user_id == current_user.id)
+        agents = agents_query.order_by(AgentLog.sequence_order, AgentLog.started_at).all()
         
-        # Determine overall status
         statuses = [a.status for a in agents]
         if "error" in statuses:
             overall_status = "error"
@@ -116,11 +127,17 @@ def get_flow_runs(
 
 
 @router.get("/flows/{run_id}", response_model=FlowRunResponse)
-def get_flow_run(run_id: str, db: Session = Depends(get_db)):
+def get_flow_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """Get details of a specific flow run."""
-    agents = db.query(AgentLog).filter(
-        AgentLog.run_id == run_id
-    ).order_by(AgentLog.sequence_order, AgentLog.started_at).all()
+    query = db.query(AgentLog).filter(AgentLog.run_id == run_id)
+    if current_user:
+        query = query.filter(AgentLog.user_id == current_user.id)
+    
+    agents = query.order_by(AgentLog.sequence_order, AgentLog.started_at).all()
     
     if not agents:
         return {"error": "Run not found"}
@@ -163,41 +180,36 @@ def get_model_config():
 @router.get("/stats")
 def get_agent_stats(
     days: int = 7,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """Get agent execution statistics."""
     since = datetime.utcnow() - timedelta(days=days)
     
-    # Total runs
-    total_runs = db.query(func.count(func.distinct(AgentLog.run_id))).filter(
-        AgentLog.started_at >= since
+    base = _scoped_query(db, current_user).filter(AgentLog.started_at >= since)
+    
+    total_runs = db.query(func.count(func.distinct(AgentLog.run_id))).select_from(
+        base.subquery()
     ).scalar()
     
-    # Runs per agent
-    agent_counts = db.query(
+    # Re-create scoped + filtered queries for each stat
+    def scoped_since():
+        q = _scoped_query(db, current_user).filter(AgentLog.started_at >= since)
+        return q
+    
+    agent_counts = scoped_since().with_entities(
         AgentLog.agent_name,
         func.count(AgentLog.id).label("count")
-    ).filter(
-        AgentLog.started_at >= since
     ).group_by(AgentLog.agent_name).all()
     
-    # Success rate
-    success_count = db.query(func.count(AgentLog.id)).filter(
-        AgentLog.started_at >= since,
+    success_count = scoped_since().filter(AgentLog.status == "success").count()
+    total_executions = scoped_since().count()
+    
+    avg_durations = scoped_since().filter(
         AgentLog.status == "success"
-    ).scalar()
-    
-    total_executions = db.query(func.count(AgentLog.id)).filter(
-        AgentLog.started_at >= since
-    ).scalar()
-    
-    # Average duration per agent
-    avg_durations = db.query(
+    ).with_entities(
         AgentLog.agent_name,
         func.avg(AgentLog.duration_ms).label("avg_ms")
-    ).filter(
-        AgentLog.started_at >= since,
-        AgentLog.status == "success"
     ).group_by(AgentLog.agent_name).all()
     
     return {

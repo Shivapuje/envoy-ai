@@ -21,7 +21,7 @@ class EmailCollector:
     def __init__(self):
         self.settings = get_settings()
         
-    def process_unread_transactions(self, since_date: datetime = None) -> int:
+    def process_unread_transactions(self, since_date: datetime = None, user_id: int = None) -> int:
         """
         Fetch new emails from IMAP and save to database.
         Optimized: Pre-loads existing message IDs to avoid per-email DB queries.
@@ -66,6 +66,7 @@ class EmailCollector:
                     # New email - save it
                     try:
                         email = Email(
+                            user_id=user_id,
                             message_id=msg_id,
                             subject=msg.subject or "(No Subject)",
                             sender=msg.from_ or "Unknown",

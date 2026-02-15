@@ -8,9 +8,10 @@ import logging
 import re
 
 from app.database import get_db
-from app.models import Email, Transaction, AgentPreference
+from app.models import Email, Transaction, AgentPreference, User
 from app.services.email_collector import get_email_collector
 from app.services.ai_engine import get_ai_engine
+from app.api.auth import get_active_user
 
 # Create router
 router = APIRouter()
@@ -32,7 +33,11 @@ class EmailResponse(BaseModel):
         from_attributes = True
 
 @router.post("/sync")
-async def sync_emails(days: int = 30, db: Session = Depends(get_db)):
+async def sync_emails(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """
     Connects to IMAP, downloads new emails, saves them as 'pending'.
     Does NOT run AI.
@@ -41,13 +46,14 @@ async def sync_emails(days: int = 30, db: Session = Depends(get_db)):
     since_date = datetime.now() - timedelta(days=days)
     
     try:
-        count = collector.process_unread_transactions(since_date=since_date)
+        user_id = current_user.id if current_user else None
+        count = collector.process_unread_transactions(since_date=since_date, user_id=user_id)
         return {"status": "success", "new_emails": count}
     except Exception as e:
         logger.exception(e)
         raise HTTPException(status_code=500, detail=str(e))
 
-def _process_finance_email(db: Session, ai_engine, email, email_text: str) -> dict:
+def _process_finance_email(db: Session, ai_engine, email, email_text: str, user_id: int = None) -> dict:
     """
     Extract finance data from email and create a transaction.
     Returns the finance analysis result.
@@ -72,6 +78,7 @@ def _process_finance_email(db: Session, ai_engine, email, email_text: str) -> di
     # Create transaction record using correct model fields
     try:
         transaction = Transaction(
+            user_id=user_id,
             email_message_id=email.message_id,
             amount=float(amount),
             currency=finance_result.get("currency", "INR"),
@@ -91,17 +98,24 @@ def _process_finance_email(db: Session, ai_engine, email, email_text: str) -> di
     return finance_result
 
 @router.post("/analyze-pending")
-async def analyze_pending_emails(limit: int = 5, db: Session = Depends(get_db)):
+async def analyze_pending_emails(
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """
     Fetches emails with status='pending' and runs the AI Agent on them.
     If category is 'Finance', also runs Finance Agent.
     """
     ai_engine = get_ai_engine()
+    user_id = current_user.id if current_user else None
     
     try:
-        pending_emails = db.query(Email).filter(
-            Email.processing_status == "pending"
-        ).order_by(Email.date.desc()).limit(limit).all()
+        query = db.query(Email).filter(Email.processing_status == "pending")
+        if current_user:
+            query = query.filter(Email.user_id == current_user.id)
+        
+        pending_emails = query.order_by(Email.date.desc()).limit(limit).all()
         
         analyzed_count = 0
         finance_count = 0
@@ -129,7 +143,7 @@ async def analyze_pending_emails(limit: int = 5, db: Session = Depends(get_db)):
             # If category is Finance, run Finance Agent too
             category = analysis.get("category", "").lower()
             if category == "finance":
-                finance_result = _process_finance_email(db, ai_engine, email, text)
+                finance_result = _process_finance_email(db, ai_engine, email, text, user_id=user_id)
                 if "error" not in finance_result and not finance_result.get("skipped"):
                     analysis["finance_data"] = finance_result
                     finance_count += 1
@@ -153,14 +167,23 @@ async def analyze_pending_emails(limit: int = 5, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/analyze/{email_id}")
-async def analyze_single_email(email_id: int, db: Session = Depends(get_db)):
+async def analyze_single_email(
+    email_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """
     Runs the AI Agent on a specific email (Manual Handover).
     If category is 'Finance', also runs Finance Agent.
     """
     ai_engine = get_ai_engine()
+    user_id = current_user.id if current_user else None
     
-    email = db.query(Email).filter(Email.id == email_id).first()
+    query = db.query(Email).filter(Email.id == email_id)
+    if current_user:
+        query = query.filter(Email.user_id == current_user.id)
+    
+    email = query.first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
         
@@ -177,7 +200,7 @@ async def analyze_single_email(email_id: int, db: Session = Depends(get_db)):
         # If category is Finance, run Finance Agent too
         category = analysis.get("category", "").lower()
         if category == "finance":
-            finance_result = _process_finance_email(db, ai_engine, email, text)
+            finance_result = _process_finance_email(db, ai_engine, email, text, user_id=user_id)
             if "error" not in finance_result and not finance_result.get("skipped"):
                 analysis["finance_data"] = finance_result
             
@@ -194,15 +217,23 @@ async def analyze_single_email(email_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list", response_model=List[EmailResponse])
-async def list_emails(limit: int = 200, db: Session = Depends(get_db)):
+async def list_emails(
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """
     List emails (both pending and processed).
     Pending emails shown first, then ordered by date.
     """
     from sqlalchemy import case
     
+    query = db.query(Email)
+    if current_user:
+        query = query.filter(Email.user_id == current_user.id)
+    
     # Order: pending first, then by date descending
-    emails = db.query(Email).order_by(
+    emails = query.order_by(
         case((Email.processing_status == "pending", 0), else_=1),
         Email.date.desc()
     ).limit(limit).all()
@@ -276,11 +307,19 @@ class PreferenceResponse(BaseModel):
 
 
 @router.get("/{email_id}", response_model=EmailDetailResponse)
-async def get_email_detail(email_id: int, db: Session = Depends(get_db)):
+async def get_email_detail(
+    email_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """
     Get full email details including body content.
     """
-    email = db.query(Email).filter(Email.id == email_id).first()
+    query = db.query(Email).filter(Email.id == email_id)
+    if current_user:
+        query = query.filter(Email.user_id == current_user.id)
+    
+    email = query.first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
     
@@ -301,7 +340,7 @@ async def get_email_detail(email_id: int, db: Session = Depends(get_db)):
             pass
     
     # Get suggested agents based on preferences
-    suggested_agents = await _get_suggested_agents(email, db)
+    suggested_agents = await _get_suggested_agents(email, db, current_user)
     
     # Parse attachments JSON
     attachments = []
@@ -331,15 +370,19 @@ async def get_email_detail(email_id: int, db: Session = Depends(get_db)):
     }
 
 
-async def _get_suggested_agents(email: Email, db: Session) -> List[str]:
+async def _get_suggested_agents(email: Email, db: Session, current_user: Optional[User] = None) -> List[str]:
     """Find matching preferences for this email."""
     sender = (email.sender or "").lower()
     subject = (email.subject or "").lower()
     
     # Query preferences and check for matches
-    preferences = db.query(AgentPreference).order_by(
+    pref_query = db.query(AgentPreference).order_by(
         AgentPreference.usage_count.desc()
-    ).limit(50).all()
+    )
+    if current_user:
+        pref_query = pref_query.filter(AgentPreference.user_id == current_user.id)
+    
+    preferences = pref_query.limit(50).all()
     
     for pref in preferences:
         sender_match = pref.sender_pattern and pref.sender_pattern.lower() in sender
@@ -360,18 +403,24 @@ async def _get_suggested_agents(email: Email, db: Session) -> List[str]:
 async def assign_email_to_agents(
     email_id: int, 
     request: AssignAgentsRequest, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """
     Assign an email to specific agents for processing.
     Optionally remembers the choice as a preference.
     """
-    email = db.query(Email).filter(Email.id == email_id).first()
+    query = db.query(Email).filter(Email.id == email_id)
+    if current_user:
+        query = query.filter(Email.user_id == current_user.id)
+    
+    email = query.first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
     
     ai_engine = get_ai_engine()
     email_text = f"Subject: {email.subject}\nFrom: {email.sender}\n\n{email.body_text or ''}"
+    user_id = current_user.id if current_user else None
     
     results = []
     
@@ -387,7 +436,7 @@ async def assign_email_to_agents(
                 
             elif agent_id == "finance":
                 # Run finance extraction
-                result = _process_finance_email(db, ai_engine, email, email_text)
+                result = _process_finance_email(db, ai_engine, email, email_text, user_id=user_id)
                 results.append({"agent": "finance", "status": "success", "data": result})
                 
             else:
@@ -399,16 +448,17 @@ async def assign_email_to_agents(
     
     # Save preference if requested
     if request.remember:
-        await _save_preference(email, request.agent_ids, db)
+        await _save_preference(email, request.agent_ids, db, current_user)
     
     db.commit()
     
     return {"status": "success", "results": results}
 
 
-async def _save_preference(email: Email, agent_ids: List[str], db: Session):
+async def _save_preference(email: Email, agent_ids: List[str], db: Session, current_user: Optional[User] = None):
     """Save or update a preference based on the email sender."""
     sender = email.sender or ""
+    user_id = current_user.id if current_user else None
     
     # Extract domain or key identifier from sender
     sender_pattern = None
@@ -423,10 +473,14 @@ async def _save_preference(email: Email, agent_ids: List[str], db: Session):
     if not sender_pattern:
         return  # Can't create meaningful pattern
     
-    # Check if preference already exists
-    existing = db.query(AgentPreference).filter(
+    # Check if preference already exists for this user + pattern
+    pref_query = db.query(AgentPreference).filter(
         AgentPreference.sender_pattern == sender_pattern
-    ).first()
+    )
+    if current_user:
+        pref_query = pref_query.filter(AgentPreference.user_id == current_user.id)
+    
+    existing = pref_query.first()
     
     agents_str = ",".join(agent_ids)
     
@@ -436,6 +490,7 @@ async def _save_preference(email: Email, agent_ids: List[str], db: Session):
         existing.updated_at = datetime.utcnow()
     else:
         pref = AgentPreference(
+            user_id=user_id,
             sender_pattern=sender_pattern,
             preferred_agents=agents_str
         )
@@ -443,11 +498,18 @@ async def _save_preference(email: Email, agent_ids: List[str], db: Session):
 
 
 @router.get("/preferences/list", response_model=List[PreferenceResponse])
-async def list_preferences(db: Session = Depends(get_db)):
+async def list_preferences(
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """Get all saved agent preferences."""
-    prefs = db.query(AgentPreference).order_by(
+    query = db.query(AgentPreference).order_by(
         AgentPreference.usage_count.desc()
-    ).limit(100).all()
+    )
+    if current_user:
+        query = query.filter(AgentPreference.user_id == current_user.id)
+    
+    prefs = query.limit(100).all()
     
     return [
         {

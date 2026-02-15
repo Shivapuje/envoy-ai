@@ -6,12 +6,13 @@ This module provides API endpoints for viewing and managing transactions.
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 
 from app.database import get_db
-from app.models import Transaction, ProcessedEmail
+from app.models import Transaction, ProcessedEmail, User
+from app.api.auth import get_active_user
 
 router = APIRouter()
 
@@ -34,19 +35,17 @@ class TransactionResponse(BaseModel):
 @router.get("/transactions", response_model=List[TransactionResponse])
 async def get_transactions(
     limit: int = 50,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """
-    Get recent transactions.
-    
-    Args:
-        limit: Maximum number of transactions to return
-        db: Database session
-        
-    Returns:
-        List of transactions
+    Get recent transactions scoped to current user.
     """
-    transactions = db.query(Transaction).order_by(
+    query = db.query(Transaction)
+    if current_user:
+        query = query.filter(Transaction.user_id == current_user.id)
+    
+    transactions = query.order_by(
         Transaction.created_at.desc()
     ).limit(limit).all()
     
@@ -54,20 +53,20 @@ async def get_transactions(
 
 
 @router.get("/transactions/stats")
-async def get_transaction_stats(db: Session = Depends(get_db)):
+async def get_transaction_stats(
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """
-    Get transaction statistics.
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Transaction statistics
+    Get transaction statistics scoped to current user.
     """
-    total_transactions = db.query(Transaction).count()
-    total_processed_emails = db.query(ProcessedEmail).count()
+    txn_query = db.query(Transaction)
+    pe_query = db.query(ProcessedEmail)
+    if current_user:
+        txn_query = txn_query.filter(Transaction.user_id == current_user.id)
+        pe_query = pe_query.filter(ProcessedEmail.user_id == current_user.id)
     
     return {
-        "total_transactions": total_transactions,
-        "total_processed_emails": total_processed_emails
+        "total_transactions": txn_query.count(),
+        "total_processed_emails": pe_query.count(),
     }

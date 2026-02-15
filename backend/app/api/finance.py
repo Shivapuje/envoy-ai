@@ -6,14 +6,15 @@ This module provides API endpoints for financial transaction management.
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 import re
 
 from app.database import get_db
-from app.models import Transaction, Email
+from app.models import Transaction, Email, User
 from app.services.email_collector import get_email_collector
+from app.api.auth import get_active_user
 
 router = APIRouter()
 
@@ -65,21 +66,17 @@ class ParseResponse(BaseModel):
 @router.get("/transactions", response_model=List[TransactionResponse])
 async def get_transactions(
     limit: int = 50,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """
-    Get recent transactions.
-    
-    Args:
-        limit: Maximum number of transactions to return (default: 50)
-        db: Database session
-        
-    Returns:
-        List of transactions with formatted data
+    Get recent transactions scoped to current user.
     """
-    transactions = db.query(Transaction).order_by(
-        Transaction.created_at.desc()
-    ).limit(limit).all()
+    query = db.query(Transaction)
+    if current_user:
+        query = query.filter(Transaction.user_id == current_user.id)
+    
+    transactions = query.order_by(Transaction.created_at.desc()).limit(limit).all()
     
     # Format transactions for frontend
     formatted_transactions = []
@@ -97,19 +94,12 @@ async def get_transactions(
 
 
 @router.post("/fetch-emails")
-async def fetch_emails_manually(since_date: str = None):
+async def fetch_emails_manually(
+    since_date: str = None,
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """
     Manually trigger email fetching for testing.
-    
-    This endpoint allows manual triggering of email processing
-    without blocking server startup.
-    
-    Args:
-        since_date: Optional date string (YYYY-MM-DD) to fetch emails from.
-                   If not provided, fetches all unread emails.
-    
-    Returns:
-        dict: Number of emails processed and details
     """
     try:
         collector = get_email_collector()
@@ -122,7 +112,8 @@ async def fetch_emails_manually(since_date: str = None):
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
         
-        count = collector.process_unread_transactions(since_date=from_date)
+        user_id = current_user.id if current_user else None
+        count = collector.process_unread_transactions(since_date=from_date, user_id=user_id)
         
         return {
             "success": True,
@@ -137,18 +128,27 @@ async def fetch_emails_manually(since_date: str = None):
 
 
 @router.delete("/cleanup")
-async def cleanup_data(db: Session = Depends(get_db)):
+async def cleanup_data(
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
+):
     """
-    Delete all transactions and processed emails.
+    Delete transactions and processed emails (scoped to user).
     """
     try:
         from app.models import ProcessedEmail
-        # count entries to be deleted
-        txn_count = db.query(Transaction).count()
-        email_count = db.query(ProcessedEmail).count()
         
-        db.query(Transaction).delete()
-        db.query(ProcessedEmail).delete()
+        if current_user:
+            txn_count = db.query(Transaction).filter(Transaction.user_id == current_user.id).count()
+            email_count = db.query(ProcessedEmail).filter(ProcessedEmail.user_id == current_user.id).count()
+            db.query(Transaction).filter(Transaction.user_id == current_user.id).delete()
+            db.query(ProcessedEmail).filter(ProcessedEmail.user_id == current_user.id).delete()
+        else:
+            txn_count = db.query(Transaction).count()
+            email_count = db.query(ProcessedEmail).count()
+            db.query(Transaction).delete()
+            db.query(ProcessedEmail).delete()
+        
         db.commit()
         
         return {
@@ -164,10 +164,15 @@ async def cleanup_data(db: Session = Depends(get_db)):
 async def get_emails(
     skip: int = 0, 
     limit: int = 50, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """Get list of raw emails."""
-    emails = db.query(Email).order_by(Email.date.desc()).offset(skip).limit(limit).all()
+    query = db.query(Email)
+    if current_user:
+        query = query.filter(Email.user_id == current_user.id)
+    
+    emails = query.order_by(Email.date.desc()).offset(skip).limit(limit).all()
     
     formatted_emails = []
     for email in emails:
@@ -189,21 +194,27 @@ async def get_emails(
 async def process_email_manually(
     email_id: int, 
     agent_type: str = "finance",
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """
     Manually route an email to a specific agent.
     """
-    email = db.query(Email).filter(Email.id == email_id).first()
+    query = db.query(Email).filter(Email.id == email_id)
+    if current_user:
+        query = query.filter(Email.user_id == current_user.id)
+    
+    email = query.first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
         
+    user_id = current_user.id if current_user else None
+    
     try:
         if agent_type == "finance":
             # Extract text from email
             text_content = email.body_text or ""
             if not text_content and email.body_html:
-                # Naive HTML to text (should improve later)
                 text_content = re.sub('<[^<]+?>', '', email.body_html)
             
             # Use Real AI Engine
@@ -219,6 +230,7 @@ async def process_email_manually(
             
             # Create transaction (normalize fields from Agent output)
             transaction = Transaction(
+                user_id=user_id,
                 email_message_id=f"manual_{email.message_id}_{int(datetime.now().timestamp())}",
                 amount=float(parsed_data.get("amount", 0.0)),
                 currency=parsed_data.get("currency", "INR"),
@@ -231,7 +243,7 @@ async def process_email_manually(
                 email_from=email.sender,
                 email_date=email.date or datetime.utcnow(),
                 raw_email_text=text_content,
-                ai_analysis=str(parsed_data), # Store full analysis
+                ai_analysis=str(parsed_data),
                 is_processed=True
             )
             
@@ -265,22 +277,16 @@ from app.utils.parsers import parse_transaction_text
 @router.post("/parse", response_model=ParseResponse)
 async def parse_transaction(
     request: ParseRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_active_user),
 ):
     """
     Parse transaction text and save to database.
-    
-    Uses regex patterns to extract transaction details.
-    
-    Args:
-        request: Parse request with transaction text
-        db: Database session
-        
-    Returns:
-        Parsed and saved transaction
     """
     if not request.text or len(request.text.strip()) < 10:
         raise HTTPException(status_code=400, detail="Transaction text is too short")
+    
+    user_id = current_user.id if current_user else None
     
     try:
         # Parse transaction using regex
@@ -288,6 +294,7 @@ async def parse_transaction(
         
         # Create transaction record
         transaction = Transaction(
+            user_id=user_id,
             email_message_id=f"manual_{datetime.utcnow().timestamp()}",
             amount=parsed_data["amount"],
             currency=parsed_data["currency"],

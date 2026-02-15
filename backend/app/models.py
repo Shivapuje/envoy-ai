@@ -54,6 +54,7 @@ class Transaction(Base):
     __tablename__ = "transactions"
     
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     email_message_id = Column(String(255), unique=True, index=True, nullable=False)
     
     # Transaction details
@@ -93,6 +94,7 @@ class ProcessedEmail(Base):
     __tablename__ = "processed_emails"
     
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     message_id = Column(String(255), unique=True, index=True, nullable=False)
     subject = Column(String(500))
     processed_at = Column(DateTime, default=datetime.utcnow)
@@ -108,6 +110,7 @@ class Email(Base):
     __tablename__ = "emails"
     
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     message_id = Column(String(255), unique=True, index=True, nullable=False)
     
     # Metadata
@@ -141,6 +144,7 @@ class AgentLog(Base):
     __tablename__ = "agent_logs"
     
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     run_id = Column(String(36), index=True, nullable=False)  # Groups related agents
     
     # Agent info
@@ -177,6 +181,7 @@ class AgentPreference(Base):
     __tablename__ = "agent_preferences"
     
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     
     # Pattern matching
     sender_pattern = Column(String(255), index=True)  # e.g., "amazon", "hdfc", "@newsletter"
