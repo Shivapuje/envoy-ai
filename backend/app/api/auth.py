@@ -4,6 +4,7 @@ Authentication API endpoints.
 Handles passkey registration and login.
 """
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -13,6 +14,8 @@ from typing import Optional
 from app.database import get_db
 from app.services.auth_service import auth_service
 from app.models import User
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -120,7 +123,7 @@ def register_begin(request: RegisterBeginRequest, db: Session = Depends(get_db))
     Returns WebAuthn registration options.
     """
     try:
-        options = auth_service.generate_registration_options(
+        options = auth_service.generate_registration_options_for_user(
             username=request.username,
             display_name=request.display_name,
             db=db
@@ -128,6 +131,9 @@ def register_begin(request: RegisterBeginRequest, db: Session = Depends(get_db))
         return options
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Register begin error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/register/complete", response_model=TokenResponse)
@@ -145,7 +151,6 @@ def register_complete(request: RegisterCompleteRequest, db: Session = Depends(ge
             db=db
         )
         
-        # Generate JWT token
         access_token = auth_service.create_access_token(
             user_id=user.id,
             username=user.username
@@ -162,6 +167,9 @@ def register_complete(request: RegisterCompleteRequest, db: Session = Depends(ge
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Register complete error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/login/begin")
@@ -172,13 +180,16 @@ def login_begin(request: LoginBeginRequest, db: Session = Depends(get_db)):
     Returns WebAuthn authentication options.
     """
     try:
-        options = auth_service.generate_authentication_options(
+        options = auth_service.generate_authentication_options_for_user(
             username=request.username,
             db=db
         )
         return options
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Login begin error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/login/complete", response_model=TokenResponse)
@@ -195,7 +206,6 @@ def login_complete(request: LoginCompleteRequest, db: Session = Depends(get_db))
             db=db
         )
         
-        # Generate JWT token
         access_token = auth_service.create_access_token(
             user_id=user.id,
             username=user.username
@@ -212,6 +222,9 @@ def login_complete(request: LoginCompleteRequest, db: Session = Depends(get_db))
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Login complete error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/me", response_model=UserResponse)

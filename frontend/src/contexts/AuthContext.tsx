@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             const options = await beginResponse.json();
 
-            // Step 2: Create passkey with browser
+            // Step 2: Create passkey with browser (v10.0.0 takes options directly)
             const credential = await startRegistration(options);
 
             // Step 3: Complete registration
@@ -103,6 +103,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(userData);
         } catch (error: any) {
             console.error('Registration error:', error);
+            if (error.name === 'NotAllowedError') {
+                throw new Error('Passkey creation was cancelled or not allowed');
+            }
             throw error;
         }
     };
@@ -123,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             const options = await beginResponse.json();
 
-            // Step 2: Authenticate with passkey
+            // Step 2: Authenticate with passkey (v10.0.0 takes options directly)
             const credential = await startAuthentication(options);
 
             // Step 3: Complete login
@@ -148,6 +151,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(userData);
         } catch (error: any) {
             console.error('Login error:', error);
+            if (error.name === 'NotAllowedError') {
+                throw new Error('Authentication was cancelled or not allowed');
+            }
             throw error;
         }
     };
