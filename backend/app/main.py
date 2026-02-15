@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-from app.api import agents, health, transactions, finance, email, agent_logs
+from app.api import agents, health, transactions, finance, email, agent_logs, auth
 from app.database import init_db
 from app.services.email_collector import get_email_collector
 
@@ -42,6 +42,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth.router, tags=["auth"])  # Auth router (no auth required)
 app.include_router(health.router, tags=["health"])
 app.include_router(agents.router, prefix="/api", tags=["agents"])
 app.include_router(transactions.router, prefix="/api", tags=["transactions"])

@@ -5,10 +5,47 @@ This module defines SQLAlchemy models for the application.
 """
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, ForeignKey, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
+
+
+class User(Base):
+    """User model for authentication."""
+    
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(255), unique=True, index=True, nullable=False)
+    display_name = Column(String(255), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=True)  # Optional for recovery
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<User(id={self.id}, username={self.username})>"
+
+
+class Credential(Base):
+    """WebAuthn credential model for passkey authentication."""
+    
+    __tablename__ = "credentials"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    
+    # WebAuthn credential data
+    credential_id = Column(String(1024), unique=True, nullable=False, index=True)
+    public_key = Column(LargeBinary, nullable=False)
+    sign_count = Column(Integer, default=0)
+    transports = Column(Text)  # JSON array of supported transports
+    
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    
+    def __repr__(self):
+        return f"<Credential(id={self.id}, user_id={self.user_id})>"
 
 
 class Transaction(Base):
